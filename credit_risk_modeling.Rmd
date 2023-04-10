@@ -21,17 +21,10 @@ This study uses and processes loan data collected on the Kaggle platform (sectio
 
 We export a CSV file of loan data collected on the Kaggle platform, from this url: https://www.kaggle.com/datasets/abhishek14398/loan-dataset
 
-```{r eval=FALSE}
+```{r}
 
 # Load data
 loan <- read.csv("D:/data/loan.csv")  
-
-```
-
-```{r echo=FALSE}
-
-# Load data
-loan <- read.csv("M:/Cours/Projets/credit_risk_modeling/data/loan.csv")  
 
 ```
 
