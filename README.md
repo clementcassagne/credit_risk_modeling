@@ -1,5 +1,5 @@
 # credit_risk_modeling
 
-This study uses and processes loan data collected on the Kaggle platform (section 1) and builds predictive models on the probability of default (section 2), loss given default (section 3) and exposure given default (section 4), to finally be able to calculate expected losses (section 5).
+Using and processing loan data collected on the Kaggle platform to build predictive models on probability of default (PD), loss given default (LGD), and exposure at default (EAD), to ultimately be able to calculate expected losses (EL).
 
 To see R Mardown file :
