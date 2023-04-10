@@ -1,0 +1,4121 @@
+---
+title: "Credit Risk Modelling in R"
+author: "Clément Cassagne"
+date: "2023-04-10"
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+    number_sections: true 
+    df_print: paged
+---
+
+**Summary**
+
+This study uses and processes loan data collected on the Kaggle platform (section 1) and builds predictive models on the probability of default (section 2), loss given default (section 3) and exposure given default (section 4), to finally be able to calculate expected losses (section 5).
+
+# Preparation & Data Cleaning
+
+## Loading data 
+
+We export a CSV file of loan data collected on the Kaggle platform, from this url: https://www.kaggle.com/datasets/abhishek14398/loan-dataset
+
+```{r eval=FALSE}
+
+# Load data
+loan <- read.csv("D:/data/loan.csv")  
+
+```
+
+```{r echo=FALSE}
+
+# Load data
+loan <- read.csv("M:/Cours/Projets/credit_risk_modeling/data/loan.csv")  
+
+```
+
+## Basic statistics
+
+```{r}
+
+# Load package
+pacman::p_load( 
+  skimr  
+)
+
+# Print basic statistics
+skim(loan) 
+
+```
+
+<br> **Notes:**
+
+-   Columns following must be converted from character to numerical format : term, int_rate, emp_length, revol_util (see section 1.3)
+-   Column following must be converted from character to date format : issue_d, earliest_cr_line, last_pymnt_d, next_pymnt_d, last_credit_pull_d (see section 1.3)
+-   Many columns without values or with few value must be removed (see section 1.4)
+
+<br>
+
+## Conversion 
+
+-   **Task 1:** Convert "issue_d" to numerical format 
+
+```{r class.source = 'fold-hide'}
+
+# Remove "months" 
+loan$term <- gsub("months", "", loan$term)
+
+# Convert to numerical format
+loan$term <- as.numeric(loan$term)
+
+```
+
+-   **Task 2:** Convert "int_rate" to numerical format 
+
+```{r class.source = 'fold-hide'}
+
+# Remove "%" 
+loan$int_rate <- gsub("%", "", loan$int_rate)
+
+# Convert to numerical format
+loan$int_rate <- as.numeric(loan$int_rate)
+
+```
+
+-   **Task 3:** Convert "revol_util" to numerical format 
+
+```{r class.source = 'fold-hide'}
+
+# Remove "%" 
+loan$revol_util <- gsub("%", "", loan$revol_util)
+
+# Convert to numerical format
+loan$revol_util <- as.numeric(loan$revol_util)
+
+```
+
+-   **Task 3:** Convert "emp_length" to numerical format 
+
+```{r class.source = 'fold-hide', warning=FALSE, message=FALSE}
+
+# Replace "<" to "0"
+loan$emp_length <- gsub("< 1 year", "0", loan$emp_length)
+
+# Remove "years" 
+loan$emp_length <- gsub("years|year", "", loan$emp_length)
+
+# Replace "10+" to "10"
+loan$emp_length <- gsub("10\\+ ", "10", loan$emp_length)
+
+# Remove empty spaces
+loan$emp_length <- gsub("\\s+", "", loan$emp_length)
+
+# Convert to numerical format
+loan$emp_length <- as.numeric(loan$emp_length)
+
+```
+
+-   **Task 4:** Convert "issue_d" to date format, then numerical format (after calculating the number of months since issuance date)
+
+```{r class.source = 'fold-hide',  warning=FALSE, message=FALSE, include = FALSE}
+
+# Change time-zone (to make the convert)
+Sys.setlocale("LC_TIME", "English")
+
+# Convert to POSIXct format
+loan$issue_d <- as.POSIXct(paste0("01-", loan$issue_d), format="%d-%b-%y")
+
+# Convert to date format
+loan$issue_d <- as.Date(format(loan$issue_d, format = "%Y-%m-%d"))
+
+# Convert to numeric format and calculate the number of months between issuance date and the 2014-12-01 
+loan$mths_since_issue_d <- round(as.numeric(difftime(as.Date('2014-12-01'), loan$issue_d, units = 'weeks'))/4.34812)
+
+```
+
+-   **Task 5:** convert "earliest_cr_line" to date format, then numerical format (after calculating the number of months since issuance date)
+
+```{r class.source = 'fold-hide', warning=FALSE, message=FALSE, include = FALSE}
+
+# Convert to POSIXct format
+loan$earliest_cr_line <- as.POSIXct(paste0("01-", loan$earliest_cr_line), format="%d-%b-%y")
+
+# Convert to date format
+loan$earliest_cr_line <- as.Date(format(loan$earliest_cr_line, format = "%Y-%m-%d"))
+
+# Convert to numeric format and calculate the number of months between issuance date and the 2014-12-01 
+loan$mths_since_earliest_cr_line <- round(as.numeric(difftime(as.Date('2014-12-01'), loan$earliest_cr_line, units = 'weeks'))/4.34812)
+
+# Replace the negative value with the maximum value (the conversion to the data format introduced inconsistent dates for the years before 1968).
+loan$mths_since_earliest_cr_line[loan$mths_since_earliest_cr_line < 0] <- max(loan$mths_since_earliest_cr_line)
+
+```
+
+-   **Task 6:** convert "last_pymnt_d" to date format
+
+```{r class.source = 'fold-hide'}
+
+# Convert to POSIXct format
+loan$last_pymnt_d <- as.POSIXct(paste0("01-", loan$last_pymnt_d), format="%d-%b-%y")
+
+# Convert to date format
+loan$last_pymnt_d <- as.Date(format(loan$last_pymnt_d, format = "%Y-%m-%d"))
+
+```
+
+-   **Task 7:** convert "next_pymnt_d" to date format
+
+```{r class.source = 'fold-hide'}
+
+# Convert to POSIXct format
+loan$next_pymnt_d <- as.POSIXct(paste0("01-", loan$next_pymnt_d), format="%d-%b-%y")
+
+# Convert to date format
+loan$next_pymnt_d <- as.Date(format(loan$next_pymnt_d, format = "%Y-%m-%d"))
+
+```
+
+-   **Task 8:** convert "last_credit_pull_d" to date format
+
+```{r class.source = 'fold-hide'}
+
+# Convert to POSIXct format
+loan$last_credit_pull_d <- as.POSIXct(paste0("01-", loan$last_credit_pull_d), format="%d-%b-%y")
+
+# Convert to date format
+loan$last_credit_pull_d <- as.Date(format(loan$last_credit_pull_d, format = "%Y-%m-%d"))
+
+```
+
+-   **Task 9:** convert "loan_status" (i.e. dependent variable) to dummy variable
+
+```{r class.source = 'fold-hide', warning=FALSE, message=FALSE, include = FALSE}
+
+# Display different modalities
+unique(loan$loan_status)
+
+# Add a column corresponding to "1" for "good loan" and "0" for "bad loan"
+loan$response <- ifelse(loan$loan_status %in% c("Charged Off"), 0, 1)
+
+# Converting to discrete variable
+loan$response <- factor(loan$response)
+
+```
+
+<br>
+
+## Missing values
+
+-   **Task 1:** Pre-selection of key variables
+
+```{r}
+
+# Subset of many columns
+loan <- subset(loan, select = c(id,member_id,response,grade,home_ownership,addr_state,verification_status,purpose,initial_list_status,term,emp_length,issue_d,int_rate,funded_amnt,earliest_cr_line,delinq_2yrs,inq_last_6mths,open_acc,pub_rec,total_acc,acc_now_delinq,total_rev_hi_lim,installment,annual_inc,mths_since_last_delinq,dti,mths_since_last_record,mths_since_issue_d,mths_since_earliest_cr_line,recoveries,total_rec_prncp))
+
+```
+
+-   **Task 2:** Missing values in %
+
+```{r warning = FALSE, message = FALSE}
+
+# Load packages
+pacman::p_load( 
+  naniar,
+  ggplot2,
+  DataExplorer
+)
+
+# Plot missing values in %
+gg_miss_var(loan,
+            show_pct = TRUE) + 
+            ylim(0, 100) +
+            labs(title = "Missing values by variable (in %)")
+
+
+```
+
+<br> **Notes:**
+
+-   3 columns with high part of missing values must be removed : total_rev_hi_lim, mths_since_last_delinq, mths_since_last_record (see task 3)
+-   1 column with small part of missing values must be managed : emp_length (see task 5)
+
+<br><br>
+
+-   **Task 3:** Excluding columns with high % of missing values
+
+```{r}
+
+# Exclude columns
+loan <- subset(loan, select = -c(total_rev_hi_lim,mths_since_last_delinq,mths_since_last_record))
+
+```
+
+-   **Task 4:** Numbers of missing values on the remaining columns 
+
+```{r}
+
+# Table NA
+profile_missing(loan) # table
+
+```
+
+<br> **Note:**
+
+-   "emp_length" is only one column with missing value : 1 075 (2,70%)
+
+<br>
+
+-   **Task 5:** Replace the missing values by the median in "emp_length"
+
+```{r}
+
+# Calculate median value
+median_emp_length <- median(loan$emp_length, na.rm = TRUE)
+
+# Construct a object replacing NaN by median value
+loan$emp_length <- ifelse(is.na(loan$emp_length), median_emp_length, loan$emp_length)
+
+```
+
+<br>
+
+## Data Visualization
+
+```{r}
+
+# Load packages
+pacman::p_load(
+  tidyverse,
+  highcharter
+)
+
+```
+
+```{r}
+
+# Histogram good vs. bad loan
+loan %>%
+  mutate(nbr_bad_good = ifelse(response == 0, "bad", "good")) %>%
+  count(nbr_bad_good) %>%
+  hchart("column", hcaes(x = nbr_bad_good, y = n),
+         colorByPoint = TRUE, 
+         dataLabels = list(enabled = TRUE, format='{y}')) %>%
+  hc_title(text = "Histogram good vs. bad loan",
+           margin = 20,
+           align = "center") %>%
+  hc_yAxis(title = list(text = "")) %>%
+  hc_xAxis(title = list(text = ""))
+
+```  
+
+**Note:**
+
+-   Bad loans represents 14.77% of total loans
+
+```{r}
+
+# collective histo
+plot_histogram(loan) 
+
+```  
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Histogram good vs. bad loan for each grade
+loan %>%
+  group_by(grade, response) %>%
+  summarize(count = n()) %>%
+  spread(response, count, fill = 0) %>%
+  pivot_longer(cols = c(`0`, `1`), names_to = "response", values_to = "count") %>%
+  mutate(response = ifelse(response == "0", "bad", "good")) %>%
+  hchart("column", hcaes(x = grade, y = count, group = response),
+         color = c("#FF0000", "#0000FF"),
+         dataLabels = list(enabled = TRUE, format='{y}')) %>%
+  hc_title(text = "Good vs bad loan for each grade",
+           margin = 20,
+           align = "center")
+
+```  
+
+**Notes:**
+
+-   Share of bad loans decrease with the improvement of borrower's grade
+-   2 most important modalities of grades are "A" and "B"
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Histogram good vs. bad loan for each home ownership
+loan %>%
+  group_by(home_ownership, response) %>%
+  summarize(count = n()) %>%
+  spread(response, count, fill = 0) %>%
+  pivot_longer(cols = c(`0`, `1`), names_to = "response", values_to = "count") %>%
+  mutate(response = ifelse(response == "0", "bad", "good")) %>%
+  hchart("column", hcaes(x = home_ownership, y = count, group = response),
+         color = c("#FF0000", "#0000FF"),
+         dataLabels = list(enabled = TRUE, format='{y}')) %>%
+  hc_title(text = "Good vs bad loan for each home_ownership",
+           margin = 20,
+           align = "center")
+
+
+```  
+
+**Notes:**
+
+-   2 most important modalities of home ownership are "RENT" and "MORTGAGE"
+-   Share of bad loans for these 2 most important modalities are pratically the same
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Histogram good vs. bad loan for each verification status
+loan %>%
+  group_by(verification_status, response) %>%
+  summarize(count = n()) %>%
+  spread(response, count, fill = 0) %>%
+  pivot_longer(cols = c(`0`, `1`), names_to = "response", values_to = "count") %>%
+  mutate(response = ifelse(response == "0", "bad", "good")) %>%
+  hchart("column", hcaes(x = verification_status, y = count, group = response),
+         color = c("#FF0000", "#0000FF"),
+         dataLabels = list(enabled = TRUE, format='{y}')) %>%
+  hc_title(text = "Good vs bad loan for each verification status",
+           margin = 20,
+           align = "center") 
+
+``` 
+
+**Note:**
+
+-   Paradoxically, the share of bad loans is more important for the status "Verified"
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Histogram good vs. bad loan for term
+loan %>%
+  group_by(term, response) %>%
+  summarize(count = n()) %>%
+  spread(response, count, fill = 0) %>%
+  pivot_longer(cols = c(`0`, `1`), names_to = "response", values_to = "count") %>%
+  mutate(response = ifelse(response == "0", "bad", "good")) %>%
+  hchart("column", hcaes(x = term, y = count, group = response),
+         color = c("#FF0000", "#0000FF"),
+         dataLabels = list(enabled = TRUE, format='{y}')) %>%
+  hc_title(text = "Good vs bad loan by term",
+           margin = 20,
+           align = "center") 
+
+``` 
+
+**Notes:**
+
+-   Only 2 modalities appear "36" and "60"
+-   Most important modality is "36" 
+-   Share of bad loans is more important for term of 60 months
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Histogram good vs. bad loan for int rate
+loan %>%
+  mutate(int_rate_cat = cut(int_rate, breaks = seq(5, 30, by = 2.5), right = FALSE)) %>%
+  group_by(int_rate_cat, response) %>%
+  summarize(count = n()) %>%
+  spread(response, count, fill = 0) %>%
+  pivot_longer(cols = c(`0`, `1`), names_to = "response", values_to = "count") %>%
+  mutate(response = ifelse(response == "0", "bad", "good")) %>%
+  hchart("column", hcaes(x = as.character(int_rate_cat), y = count, group = response),
+         color = c("#FF0000", "#0000FF"),
+         dataLabels = list(enabled = TRUE, format='{y}')) %>%
+  hc_title(text = "Good vs bad loan  by interest rate",
+           margin = 20,
+           align = "center") %>%
+  hc_xAxis(title = list(text = "interest rate")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+
+``` 
+
+**Notes:**
+
+-   Share of bad loans rises as interest rate increases
+-   Most of loans have an interest rate below of 15%
+
+```{r message=FALSE}
+
+# Identifying outliers
+outlier_cutoff <- quantile(loan$annual_inc, 0.75) + 1.5 * IQR(loan$annual_inc)
+
+# Store outliers 
+index_outlier_ROT <- which(loan$annual_inc > outlier_cutoff)
+
+# Remove outliers
+loan_data_ROT <- loan[-index_outlier_ROT, ]
+
+# Histogram good vs. bad loan for annual income
+loan_data_ROT %>%
+  mutate(annual_inc_cat = cut(annual_inc, breaks = seq(0, 150000, by = 25000), right = FALSE)) %>%
+  group_by(annual_inc_cat, response) %>%
+  summarize(count = n()) %>%
+  spread(response, count, fill = 0) %>%
+  pivot_longer(cols = c(`0`, `1`), names_to = "response", values_to = "count") %>%
+  mutate(response = ifelse(response == "0", "bad", "good")) %>%
+  hchart("column", hcaes(x = as.character(annual_inc_cat), y = count, group = response),
+         color = c("#FF0000", "#0000FF"),
+         dataLabels = list(enabled = TRUE, format='{y}')) %>%
+  hc_title(text = "Good vs bad loan  by annual_inc",
+           margin = 20,
+           align = "center") %>%
+  hc_xAxis(title = list(text = "annual_inc")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+``` 
+
+**Notes:**
+
+-   Removal of outliers to improve the readability of the histogram 
+-   Share of bad loans declines as annual revenue increases
+-   Most of annual incomes are between 25K\$ and 75K\$
+
+<br><br>
+
+# PD Model
+
+Before building the predictive model (2.2) and testing it (2.3) to obtain the credit score of each borrower (2.4) and the minimum acceptable credit score for a given probability of default (2.5), we need to pre-process the data (2.1) insofar as, for logistic regression, only categorical variables should be used.
+  
+## Data preprocessing
+
+This data pre-processing consists of converting the discrete and continuous variables into usable dummy variables for the forecasting model. 
+
+First of all, we do some preliminary work (2.1.1) consisting of creating dummy variables for the discrete variables (this way we can make a copy of the entire data set, including the dummy variables, before splitting it; this copy will be used for subsequent models), splitting the data between training and testing, creating a function to compute the weight of evidence (WoE) more quickly.
+
+Next, we perform a preprocessing for the discrete variables (2.1.2) consisting of producing a possible clustering of the dummy variables based on their respective weight of evidence.
+
+Then, we perform a preprocessing for the continuous variables (2.1.3) consisting of segmenting the data (in other words, converting them into discrete variables) and, in this way, we can perform the same work as in 2.1.2 to obtain dummy variables.
+
+Finally, we create the final dataset (2.1.4) by concatenating the data frames of the dummy variables (excluding the benchmarks).
+
+### Preliminary work
+
+#### Creating dummies for key discrete variables
+
+-   **Task 1:** Creating dummies for "grade" 
+
+```{r, warning=FALSE, message = FALSE}
+
+# Load package
+pacman::p_load(
+  fastDummies
+)
+
+# Creating dummies 
+dummies_grade <- set_names(dummy_cols(loan$grade, remove_first_dummy = FALSE, remove_selected_column= TRUE), 
+paste0("grade", ":", str_remove_all(names(dummy_cols(loan$grade, remove_first_dummy = FALSE, remove_selected_column= TRUE)), ".data_")))
+
+```
+
+-   **Task 2:** Creating dummies for "home_ownership" 
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Creating dummies 
+dummies_home_ownership <- set_names(dummy_cols(loan$home_ownership, remove_first_dummy = FALSE, remove_selected_column= TRUE), paste0("home_ownership", ":", str_remove_all(names(dummy_cols(loan$home_ownership, remove_first_dummy = FALSE, remove_selected_column= TRUE)), ".data_")))
+
+```
+
+-   **Task 3:** Creating dummies for "verification_status" 
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Creating dummies 
+dummies_verification_status <- set_names(dummy_cols(loan$verification_status, remove_first_dummy = FALSE, remove_selected_column= TRUE), paste0("verification_status", ":", str_remove_all(names(dummy_cols(loan$verification_status, remove_first_dummy = FALSE, remove_selected_column= TRUE)), ".data_")))
+
+```
+
+-   **Task 4:** Creating dummies for "purpose"
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Creating dummies
+dummies_purpose <- set_names(dummy_cols(loan$purpose, remove_first_dummy = FALSE, remove_selected_column= TRUE), 
+paste0("purpose", ":", str_remove_all(names(dummy_cols(loan$purpose, remove_first_dummy = FALSE,  remove_selected_column= TRUE)), ".data_")))
+
+```
+
+-   **Task 5:** Creating dummies for "addr_state"
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Creating dummies
+dummies_addr_state <- set_names(dummy_cols(loan$addr_state, remove_first_dummy = FALSE, remove_selected_column= TRUE),  paste0("addr_state", ":", str_remove_all(names(dummy_cols(loan$addr_state, remove_first_dummy = FALSE,  remove_selected_column= TRUE)), ".data_")))
+
+```
+
+-   **Task 6:** Creating dummies for "initial_list_status"
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Creating dummies
+dummies_initial_list_status <- set_names(dummy_cols(loan$initial_list_status, remove_first_dummy = FALSE, remove_selected_column= TRUE), paste0("initial_list_status", ":", str_remove_all(names(dummy_cols(loan$initial_list_status, remove_first_dummy = FALSE, remove_selected_column= TRUE)), ".data_")))
+
+```
+
+-   **Task 7:** Concatenate the dummy variables
+
+```{r}
+
+# Concatenate df
+loan_dummies <- cbind(dummies_grade, dummies_home_ownership, dummies_verification_status, dummies_purpose, dummies_addr_state, dummies_initial_list_status)
+
+```
+
+-   **Task 8:** Concatenate the original data with the dummy variables
+
+```{r}
+
+# Concatenate original data set with dummies df
+loan <- cbind(loan, loan_dummies)
+
+# Make a copy for LGD & EAD Model 
+loan_copy <- loan
+
+```
+
+<br>
+
+#### Splitting data
+
+```{r}
+
+# Load package
+pacman::p_load(
+  caTools
+)
+
+# Specify seed
+set.seed(123)
+
+# Splitting data 
+index <- sample.split(loan$response, SplitRatio = 0.8)
+
+# Store train data
+loan_train <- loan[index == TRUE, ]
+
+# Store targets train data
+loan_test <- loan[index == FALSE, ]
+
+```
+
+<br>
+
+#### Creating functions of WoE
+
+##### Calculation function of the WoE
+
+```{r}
+
+# Function for discrete variables (sorted by ascending order of WoE)
+calculate_discrete_woe <- function(data, target_var, grouping_var) {
+  require(dplyr)
+  require(purrr)
+  
+  data %>%
+    group_by({{grouping_var}}) %>%
+    summarise(n_loans = n(),
+              percentage_loans = n_loans / nrow(data) * 100,
+              n_good_loans = sum({{target_var}} == 1),
+              percentage_good_loans = mean({{target_var}} == 1) * 100, 
+              n_bad_loans = n_loans - n_good_loans,
+              percentage_bad_loans = 100 - percentage_good_loans,
+              WoE = log(percentage_good_loans / percentage_bad_loans)) %>%
+    arrange(WoE)
+}
+
+# Function for continuous variables (sorted by ascending order of input variable)
+calculate_continuous_woe <- function(data, target_var, grouping_var) {
+  require(dplyr)
+  
+  data %>%
+    group_by({{grouping_var}}) %>%
+    summarise(n_loans = n(),
+              percentage_loans = n_loans / nrow(data) * 100,
+              n_good_loans = sum({{target_var}} == 1),
+              percentage_good_loans = mean({{target_var}} == 1) * 100, 
+              n_bad_loans = n_loans - n_good_loans,
+              percentage_bad_loans = 100 - percentage_good_loans,
+              WoE = log(percentage_good_loans / percentage_bad_loans))
+}
+
+```
+
+<br>
+
+##### Plotting function of the WoE
+
+```{r}
+
+# Function for plot
+woe_chart <- function(df, category_col) {
+  
+  chart <- highchart() %>%
+    hc_chart(type = "line") %>%
+    hc_xAxis(categories = df[[category_col]], title = list(text = category_col), type = "categorie") %>%
+    hc_yAxis(title = list(text = "WoE")) %>%
+    hc_add_series(name = "WoE",
+                  data = df$WoE) %>%
+    hc_title(text = paste0("WoE by ", category_col),
+             align = "center") 
+  
+  return(chart)
+}
+
+```
+
+<br>
+
+### Preprocessing discrete variables
+
+<br> **Process:**
+
+-   Calculating Weight of Evidence (WoE) for each variable
+-   Displaying tables of WoE sorted by ascending order
+-   Displaying plots of WoE sorted by ascending order
+-   If applicable, to reclassify dummies
+
+<br> **Note:** The selection of reclassification dummies is based on the training data. However, once the choice is made, reclassification is performed for the training data, as it is for the data test.
+
+<br> 
+
+#### Grade
+
+-   **Data train**
+
+```{r}
+
+# Using function created to calculate WoE
+grade_train_stat <- calculate_discrete_woe(loan_train, response, grade)
+
+# Display results
+grade_train_stat
+
+# Using function to create chart
+grade_train_chart <- woe_chart(grade_train_stat, "grade")
+
+# Display chart
+grade_train_chart
+
+```
+
+#### Verification_status
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+verification_train_stat <- calculate_discrete_woe(loan_train, response, verification_status)
+
+# Display results
+verification_train_stat
+
+# Using function to create chart
+verification_train_chart <- woe_chart(verification_train_stat, "verification_status")
+
+# Display chart
+verification_train_chart
+
+```
+
+#### home_ownership
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+home_ownership_train_stat <- calculate_discrete_woe(loan_train, response, home_ownership)
+
+# Display results
+home_ownership_train_stat
+
+# Using function to create chart
+home_ownership_train_chart <- woe_chart(home_ownership_train_stat, "home_ownership")
+
+# Display chart
+home_ownership_train_chart
+
+```
+
+**Notes:**
+
+-   2 categories with few observations (OTHER & NONE) must be reclassified among dummies:
+    -   NONE should be reclassified with MORTGAGE, whose WoE is closest.
+    -   OTHER is hard to reclassify (because its WoE is quite far compared to the other categories). Nevertheless, based on the data set, we decide to reclassify with RENT.
+
+<br>
+
+-   **Reclassifying dummies for “home_ownership”**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Reclassified "NONE" in "loan_train"
+loan_train$`home_ownership:MORTGAGE_NONE` <- rowSums(loan_train[c("home_ownership:MORTGAGE", "home_ownership:NONE")])
+
+# Reclassified "OTHER" in "loan_train"
+loan_train$`home_ownership:RENT_OTHER` <- rowSums(loan_train[c("home_ownership:RENT", "home_ownership:OTHER")])
+
+#############
+# loan_test #
+#############
+
+# Reclassified "NONE" in "loan_test"
+loan_test$`home_ownership:MORTGAGE_NONE` <- rowSums(loan_test[c("home_ownership:MORTGAGE", "home_ownership:NONE")])
+
+# Reclassified "OTHER" in "loan_test"
+loan_test$`home_ownership:RENT_OTHER` <- rowSums(loan_test[c("home_ownership:RENT", "home_ownership:OTHER")])
+
+```
+
+<br>
+
+#### purpose
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+purpose_train_stat <- calculate_discrete_woe(loan_train, response, purpose)
+
+# Display results
+purpose_train_stat
+
+# Using function to create chart
+purpose_train_chart <- woe_chart(purpose_train_stat, "purpose")
+
+# Display chart
+purpose_train_chart
+
+```
+
+
+**Note:**
+
+-   After seeing the numbers of observations and the plot, we grouped like this:
+    -   small_business
+    -   Grouping of dummies: renewable_energy, educational
+    -   Grouping of dummies: other, moving, house, consolidation, medical
+    -   vacation
+    -   home_improvement
+    -   credit_card
+    -   Grouping of dummies: wedding, car, major_purchase    
+
+<br><br>
+
+-   **Reclassifying dummies for "purpose"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Combining "renewable_energy", "educational" in "loan_train"
+loan_train$`purpose:renewable_energy_educational` <- rowSums(loan_train[c("purpose:renewable_energy", "purpose:educational")])
+
+# Combining "other", "moving", "house", "consolidation" & "medical" in "loan_train"
+loan_train$`purpose:other_moving_house_consolidation_medical` <- rowSums(loan_train[c("purpose:other", "purpose:moving","purpose:house", "purpose:debt_consolidation","purpose:medical")])
+
+# Combining "wedding", "car", "major_purchase" in "loan_train"
+loan_train$`purpose:wedding_car_purchase` <- rowSums(loan_train[c("purpose:wedding", "purpose:car","purpose:major_purchase")])
+
+
+#############
+# loan_test #
+#############
+
+# Combining "renewable_energy", "educational" in "loan_test"
+loan_test$`purpose:renewable_energy_educational` <- rowSums(loan_test[c("purpose:renewable_energy", "purpose:educational")])
+
+# Combining "other", "moving", "house", "consolidation" & "medical" in "loan_test"
+loan_test$`purpose:other_moving_house_consolidation_medical` <- rowSums(loan_test[c("purpose:other", "purpose:moving","purpose:house", "purpose:debt_consolidation","purpose:medical")])
+
+# Combining "wedding", "car", "major_purchase" in "loan_test"
+loan_test$`purpose:wedding_car_purchase` <- rowSums(loan_test[c("purpose:wedding", "purpose:car","purpose:major_purchase")])
+
+```
+
+<br>
+
+#### addr_state
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+addr_state_train_stat <- calculate_discrete_woe(loan_train, response, addr_state)
+
+# Display results
+addr_state_train_stat
+
+# Filter out outliers
+filtered_df <- subset(addr_state_train_stat, addr_state != "NE" & addr_state != "ME" & addr_state != "IN" & addr_state != "ID" & addr_state != "IA" & addr_state != "WY" & addr_state != "TN" & addr_state != "DC")
+
+# Generate chart with filtered data
+addr_state_train_chart <- woe_chart(filtered_df, "addr_state")
+
+# Display chart
+addr_state_train_chart
+
+```
+
+
+**Note:**
+
+-   After seeing the numbers of observations and the plot, we grouped like this:
+    -   Grouping of dummies: NE (few observations), NV, AK
+    -   Grouping of dummies: SD, UT
+    -   Grouping of dummies: FL, NH
+    -   Grouping of dummies: WA, MO, CA, MD
+    -   Grouping of dummies: NJ, AZ, WI, GA, NM
+    -   Grouping of dummies: NC, OK, MS, OR, KY 
+    -   HI 
+    -   Grouping of dummies: WV, SC, MI, NY, MT 
+    -   Grouping of dummies: CT, IL, OH, DE, RI    
+    -   AL
+    -   VA  
+    -   Grouping of dummies: PA, LA
+    -   Grouping of dummies: VT, KS  
+    -   Grouping of dummies: MA, MN     
+    -   Grouping of dummies: TX, CO      
+    -   AR    
+    -   Grouping of dummies: DC, TN (few observations), WY (few observations), IA (few observations), ID (few observations), IN (few observations), ME (few observations)   
+
+<br><br>
+
+-   **Reclassifying dummies for "addr_state"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Combining "NE", "NV", "AK" in "loan_train"
+loan_train$`addr_state:NE_NV_AK` <- rowSums(loan_train[c("addr_state:NE", "addr_state:NV", "addr_state:AK")])
+
+# Combining "SD", "UT" in "loan_train"
+loan_train$`addr_state:SD_UT` <- rowSums(loan_train[c("addr_state:SD", "addr_state:UT")])
+
+# Combining "FL", "NH" in "loan_train"
+loan_train$`addr_state:FL_NH` <- rowSums(loan_train[c("addr_state:FL", "addr_state:NH")])
+
+# Combining "WA", "MO", "CA", "MD" in "loan_train"
+loan_train$`addr_state:WA_MO_CA_MD` <- rowSums(loan_train[c("addr_state:WA", "addr_state:MO", "addr_state:CA", "addr_state:MD")])
+
+# Combining "NJ", "AZ", "WI", "GA", "NM" in "loan_train" 
+loan_train$`addr_state:NJ_AZ_WI_GA_NM` <- rowSums(loan_train[c("addr_state:NJ", "addr_state:AZ","addr_state:WI", "addr_state:GA","addr_state:NM")])
+
+# Combining "NC", "OK", "MS", "OR", "KY" in "loan_train"
+loan_train$`addr_state:NC_OK_MS_OR_KY` <- rowSums(loan_train[c("addr_state:NC", "addr_state:OK", "addr_state:MS", "addr_state:OR","addr_state:KY")])
+
+# Combining "WV", "SC", "MI", "NY", "MT" in "loan_train"
+loan_train$`addr_state:WV_SC_MI_NY_MT` <- rowSums(loan_train[c("addr_state:WV", "addr_state:SC", "addr_state:MI", "addr_state:NY","addr_state:MT")])
+
+# Combining "CT", "IL", "OH", "DE", "RI" in "loan_train"
+loan_train$`addr_state:CT_IL_OH_DE_RI` <- rowSums(loan_train[c("addr_state:CT", "addr_state:IL", "addr_state:OH", "addr_state:DE","addr_state:RI")])
+
+# Combining "PA" "LA" in "loan_train"
+loan_train$`addr_state:PA_LA` <- rowSums(loan_train[c("addr_state:PA", "addr_state:LA")])
+
+# Combining "VT", "KS " in "loan_train"
+loan_train$`addr_state:VT_KS` <- rowSums(loan_train[c("addr_state:VT", "addr_state:KS")])
+
+# Combining "MA", "MN" in "loan_train"
+loan_train$`addr_state:MA_MN` <- rowSums(loan_train[c("addr_state:MA", "addr_state:MN")])
+
+# Combining "TX", "CO" in "loan_train"
+loan_train$`addr_state:TX_CO` <- rowSums(loan_train[c("addr_state:TX", "addr_state:CO")])
+
+# Combining DC, TN, WY, IA, ID, IN, ME in "loan_train"
+loan_train$`addr_state:DC_TN_WY_IA_ID_IN_ME` <- rowSums(loan_train[c("addr_state:DC", "addr_state:TN", "addr_state:WY", "addr_state:IA","addr_state:ID", "addr_state:IN", "addr_state:ME")])
+
+
+#############
+# loan_test #
+#############
+
+# Combining "NE", "NV", "AK" in "loan_test"
+loan_test$`addr_state:NE_NV_AK` <- rowSums(loan_test[c("addr_state:NE", "addr_state:NV", "addr_state:AK")])
+
+# Combining "SD", "UT" in "loan_test"
+loan_test$`addr_state:SD_UT` <- rowSums(loan_test[c("addr_state:SD", "addr_state:UT")])
+
+# Combining "FL", "NH" in "loan_test"
+loan_test$`addr_state:FL_NH` <- rowSums(loan_test[c("addr_state:FL", "addr_state:NH")])
+
+# Combining "WA", "MO", "CA", "MD" in "loan_test"
+loan_test$`addr_state:WA_MO_CA_MD` <- rowSums(loan_test[c("addr_state:WA", "addr_state:MO", "addr_state:CA", "addr_state:MD")])
+
+# Combining "NJ", "AZ", "WI", "GA", "NM" in "loan_test" 
+loan_test$`addr_state:NJ_AZ_WI_GA_NM` <- rowSums(loan_test[c("addr_state:NJ", "addr_state:AZ","addr_state:WI", "addr_state:GA","addr_state:NM")])
+
+# Combining "NC", "OK", "MS", "OR", "KY" in "loan_test"
+loan_test$`addr_state:NC_OK_MS_OR_KY` <- rowSums(loan_test[c("addr_state:NC", "addr_state:OK", "addr_state:MS", "addr_state:OR","addr_state:KY")])
+
+# Combining "WV", "SC", "MI", "NY", "MT" in "loan_test"
+loan_test$`addr_state:WV_SC_MI_NY_MT` <- rowSums(loan_test[c("addr_state:WV", "addr_state:SC", "addr_state:MI", "addr_state:NY","addr_state:MT")])
+
+# Combining "CT", "IL", "OH", "DE", "RI" in "loan_test"
+loan_test$`addr_state:CT_IL_OH_DE_RI` <- rowSums(loan_test[c("addr_state:CT", "addr_state:IL", "addr_state:OH", "addr_state:DE","addr_state:RI")])
+
+# Combining "PA" "LA" in "loan_test"
+loan_test$`addr_state:PA_LA` <- rowSums(loan_test[c("addr_state:PA", "addr_state:LA")])
+
+# Combining "VT", "KS " in "loan_test"
+loan_test$`addr_state:VT_KS` <- rowSums(loan_test[c("addr_state:VT", "addr_state:KS")])
+
+# Combining "MA", "MN" in "loan_test"
+loan_test$`addr_state:MA_MN` <- rowSums(loan_test[c("addr_state:MA", "addr_state:MN")])
+
+# Combining "TX", "CO" in "loan_test"
+loan_test$`addr_state:TX_CO` <- rowSums(loan_test[c("addr_state:TX", "addr_state:CO")])
+
+# Combining DC, TN, WY, IA, ID, IN, ME in "loan_test"
+loan_test$`addr_state:DC_TN_WY_IA_ID_IN_ME` <- rowSums(loan_test[c("addr_state:DC", "addr_state:TN", "addr_state:WY", "addr_state:IA","addr_state:ID", "addr_state:IN", "addr_state:ME")])
+
+```
+
+### Preprocessing continuous variables
+
+<br> **Process:**
+
+-   Calculating Weight of Evidence (WoE) for each variable
+-   Display of WoE tables sorted by ascending order of value in the variable (and not by WoE)
+-   Displaying plots of WoE tables sorted by ascending order of value in the variable 
+-   Creating and classifying dummies
+
+<br> 
+
+#### term_int
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+term_train_stat <- calculate_continuous_woe(loan_train, response, term)
+
+# Display results
+term_train_stat
+
+# Generate chart with filtered data
+term_train_chart <- woe_chart(term_train_stat, "term")
+
+# Display chart
+term_train_chart
+
+```
+
+-   **Creating and classifying dummies for "term"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "term" for data training
+loan_train$`term:36` <- ifelse(loan_train$term == 36, 1, 0)
+loan_train$`term:60` <- ifelse(loan_train$term == 60, 1, 0)
+
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "int_rate" for data testing
+loan_test$`term:36` <- ifelse(loan_test$term == 36, 1, 0)
+loan_test$`term:60` <- ifelse(loan_test$term == 60, 1, 0)
+
+```
+
+<br>
+
+#### emp_length
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+emp_length_train_stat <- calculate_continuous_woe(loan_train, response, emp_length)
+
+emp_length_train_stat
+
+# Generate chart with filtered data
+emp_length_train_chart <- woe_chart(emp_length_train_stat, "emp_length")
+
+# Display chart
+emp_length_train_chart
+
+```
+
+<br> **Note:** The relationship between WoE & "emp_length" is not monotonic, which is quite surprising (because theoretically, we should find a positive relationship). Therefore, we will not use this explanatory variable for the PD model.
+
+
+<br>
+
+#### int_rate
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Data segmentation 
+loan_train$int_rate_factor <- cut(loan_train$int_rate, breaks = 50)
+
+# Using function created to calculate WoE
+int_rate_train_stat <- calculate_continuous_woe(loan_train, response, int_rate_factor)
+
+# Display results
+int_rate_train_stat
+
+# Generate chart with filtered data
+int_rate_train_chart <- woe_chart(int_rate_train_stat, "int_rate_factor")
+
+# Display chart
+int_rate_train_chart
+
+```
+
+-   **Creating and classifying dummies for "int_rate"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "int_rate" for data training
+loan_train$`int_rate:<8.49` <- ifelse(loan_train$int_rate <= 8.49, 1, 0)
+loan_train$`int_rate:_8.49_11.2` <- ifelse(loan_train$int_rate > 8.49 & loan_train$int_rate <= 11.2, 1, 0)
+loan_train$`int_rate:_11.2_16.2` <- ifelse(loan_train$int_rate > 11.2 & loan_train$int_rate <= 16.2, 1, 0)
+loan_train$`int_rate:>16.2` <- ifelse(loan_train$int_rate > 16.2, 1, 0)
+
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "int_rate" for data testing
+loan_test$`int_rate:<8.49` <- ifelse(loan_test$int_rate <= 8.49, 1, 0)
+loan_test$`int_rate:_8.49_11.2` <- ifelse(loan_test$int_rate > 8.49 & loan_test$int_rate <= 11.2, 1, 0)
+loan_test$`int_rate:_11.2_16.2` <- ifelse(loan_test$int_rate > 11.2 & loan_test$int_rate <= 16.2, 1, 0)
+loan_test$`int_rate:>16.2` <- ifelse(loan_test$int_rate > 16.2, 1, 0)
+
+
+```
+
+<br>
+
+#### annual_inc
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Data segmentation 
+loan_train$annual_inc_factor <- cut(loan_train$annual_inc, breaks = 50)
+
+# Using function created to calculate WoE
+annual_inc_train_stat <- calculate_continuous_woe(loan_train, response, annual_inc_factor)
+
+annual_inc_train_stat
+
+```
+
+<br> **Note:** The few higher incomes strongly influence the analysis. We isolate borrowers with annual incomes above $140,000 and then recalculate the WoE.
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Exclude 
+loan_train_wo_higher_income <- subset(loan_test, annual_inc <= 140000)
+
+# Data segmentation 
+loan_train_wo_higher_income$annual_inc_factor <- cut(loan_train_wo_higher_income$annual_inc, breaks = 50)
+
+# Using function created to calculate WoE
+annual_inc_train_stat <- calculate_continuous_woe(loan_train_wo_higher_income, response, annual_inc_factor)
+
+annual_inc_train_stat
+
+# Generate chart with filtered data
+annual_inc_train_chart <- woe_chart(annual_inc_train_stat, "annual_inc_factor")
+
+# Display chart
+annual_inc_train_chart
+
+```
+
+<br> **Note:** While we can observed the traditional positive relationship, although weakly, between WoE and annual income until 102 K\$, the relationship become more atypical above 102 K\$.
+
+<br>
+
+-   **Creating and classifying dummies for "annual_inc"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "annual_inc" for data training
+loan_train$`annual_inc:<23700` <- ifelse(loan_train$annual_inc <= 23700, 1, 0)
+loan_train$`annual_inc:23700_56200` <- ifelse(loan_train$annual_inc > 23700 & loan_train$annual_inc <= 56200, 1, 0)
+loan_train$`annual_inc:56200_88600` <- ifelse(loan_train$annual_inc > 56200 & loan_train$annual_inc <= 88600, 1, 0)
+loan_train$`annual_inc:88600_118000` <- ifelse(loan_train$annual_inc > 88600 & loan_train$annual_inc <= 118000, 1, 0)
+loan_train$`annual_inc:118000_129000` <- ifelse(loan_train$annual_inc > 118000 & loan_train$annual_inc <= 129000, 1, 0)
+loan_train$`annual_inc:129000_132000` <- ifelse(loan_train$annual_inc > 129000 & loan_train$annual_inc <= 132000, 1, 0)
+loan_train$`annual_inc:132000_140000` <- ifelse(loan_train$annual_inc > 132000 & loan_train$annual_inc <= 140000, 1, 0)
+loan_train$`annual_inc:>140000` <- ifelse(loan_train$annual_inc > 140000, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "annual_inc" for data testing
+loan_test$`annual_inc:<23700` <- ifelse(loan_test$annual_inc <= 23700, 1, 0)
+loan_test$`annual_inc:23700_56200` <- ifelse(loan_test$annual_inc > 23700 & loan_test$annual_inc <= 56200, 1, 0)
+loan_test$`annual_inc:56200_88600` <- ifelse(loan_test$annual_inc > 56200 & loan_test$annual_inc <= 88600, 1, 0)
+loan_test$`annual_inc:88600_118000` <- ifelse(loan_test$annual_inc > 88600 & loan_test$annual_inc <= 118000, 1, 0)
+loan_test$`annual_inc:118000_129000` <- ifelse(loan_test$annual_inc > 118000 & loan_test$annual_inc <= 129000, 1, 0)
+loan_test$`annual_inc:129000_132000` <- ifelse(loan_test$annual_inc > 129000 & loan_test$annual_inc <= 132000, 1, 0)
+loan_test$`annual_inc:132000_140000` <- ifelse(loan_test$annual_inc > 132000 & loan_test$annual_inc <= 140000, 1, 0)
+loan_test$`annual_inc:>140000` <- ifelse(loan_test$annual_inc > 140000, 1, 0)
+
+```
+
+<br>
+
+#### dti
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Data segmentation 
+loan_train$dti_factor <- cut(loan_train$dti, breaks = 50)
+
+# Using function created to calculate WoE
+dti_train_stat <- calculate_continuous_woe(loan_train, response, dti_factor)
+
+# Display results
+dti_train_stat
+
+```
+
+<br> **Note:** The DTI categories above 25 have too few observations, so it is best to combine them into one category.
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Remove outliers
+loan_train_wo_higher_dti <- subset(loan_test, dti <= 25)
+
+# Data segmentation 
+loan_train_wo_higher_dti$dti_factor <- cut(loan_train_wo_higher_dti$dti, breaks = 50)
+
+# Using function created to calculate WoE
+dti_train_stat <- calculate_continuous_woe(loan_train_wo_higher_dti, response, dti_factor)
+
+# Display results
+dti_train_stat
+
+# Generate chart with filtered data
+dti_train_chart <- woe_chart(dti_train_stat, "dti_factor")
+
+# Display chart
+dti_train_chart
+
+```
+
+-   **Creating and classifying dummies for "dti"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "dti" for data training
+loan_train$`dti:<2.5` <- ifelse(loan_train$dti<= 2.5, 1, 0)
+loan_train$`dti_2.5_6` <- ifelse(loan_train$dti> 2.5 & loan_train$dti<= 6, 1, 0)
+loan_train$`dti_6_12.5` <- ifelse(loan_train$dti> 6 & loan_train$dti<= 12.5, 1, 0)
+loan_train$`dti_12.5_16` <- ifelse(loan_train$dti> 12.5 & loan_train$dti<= 16, 1, 0)
+loan_train$`dti_16_19` <- ifelse(loan_train$dti> 16 & loan_train$dti<= 19, 1, 0)
+loan_train$`dti_19_22` <- ifelse(loan_train$dti> 19 & loan_train$dti<= 22, 1, 0)
+loan_train$`dti_22_25` <- ifelse(loan_train$dti> 22 & loan_train$dti<= 25, 1, 0)
+loan_train$`dti:>25` <- ifelse(loan_train$dti> 25, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "dti" for data testing
+loan_test$`dti:<2.5` <- ifelse(loan_test$dti<= 2.5, 1, 0)
+loan_test$`dti_2.5_6` <- ifelse(loan_test$dti> 2.5 & loan_test$dti<= 6, 1, 0)
+loan_test$`dti_6_12.5` <- ifelse(loan_test$dti> 6 & loan_test$dti<= 12.5, 1, 0)
+loan_test$`dti_12.5_16` <- ifelse(loan_test$dti> 12.5 & loan_test$dti<= 16, 1, 0)
+loan_test$`dti_16_19` <- ifelse(loan_test$dti> 16 & loan_test$dti<= 19, 1, 0)
+loan_test$`dti_19_22` <- ifelse(loan_test$dti> 19 & loan_test$dti<= 22, 1, 0)
+loan_test$`dti_22_25` <- ifelse(loan_test$dti> 22 & loan_test$dti<= 25, 1, 0)
+loan_test$`dti:>25` <- ifelse(loan_test$dti> 25, 1, 0)
+
+```
+
+<br>
+
+#### pub_rec
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+pub_rec_train_stat <- calculate_continuous_woe(loan_train, response, pub_rec)
+
+# Display results
+pub_rec_train_stat
+
+# Generate chart with filtered data
+pub_rec_train_chart <- woe_chart(pub_rec_train_stat, "pub_rec")
+
+# Display chart
+pub_rec_train_chart
+
+```
+
+<br> 
+
+**Note:** The pub_rec categories above 2 have too few observations, so it is best to combine them with pub_rec =1.
+
+<br>
+
+-   **Creating and classifying dummies for "pub_rec"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "pub_rec" for data training
+loan_train$`pub_rec:<1` <- ifelse(loan_train$pub_rec< 1, 1, 0)
+loan_train$`pub_rec:>=1` <- ifelse(loan_train$pub_rec>= 1, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "pub_rec" for data testing
+loan_test$`pub_rec:<1` <- ifelse(loan_test$pub_rec< 1, 1, 0)
+loan_test$`pub_rec:>=1` <- ifelse(loan_test$pub_rec>= 1, 1, 0)
+
+```
+
+<br>
+
+#### funded_amnt 
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Data segmentation 
+loan_train$funded_amnt_factor <- cut(loan_train$funded_amnt , breaks = 20)
+
+# Using function created to calculate WoE
+funded_amnt_train_stat <- calculate_continuous_woe(loan_train, response, funded_amnt_factor)
+
+# Display results
+funded_amnt_train_stat
+
+# Generate chart with filtered data
+funded_amnt_train_chart <- woe_chart(funded_amnt_train_stat, "funded_amnt_factor")
+
+# Display chart
+funded_amnt_train_chart
+
+```
+
+-   **Creating and classifying dummies for "funded_amnt"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "funded_amnt" for data training
+loan_train$`funded_amnt:<15000` <- ifelse(loan_train$funded_amnt< 15000, 1, 0)
+loan_train$`funded_amnt_15000_20000` <- ifelse(loan_train$funded_amnt> 15000 & loan_train$funded_amnt<= 20000, 1, 0)
+loan_train$`funded_amnt_20000_23000` <- ifelse(loan_train$funded_amnt> 20000 & loan_train$funded_amnt<= 23000, 1, 0)
+loan_train$`funded_amnt_23000_26500` <- ifelse(loan_train$funded_amnt> 23000 & loan_train$funded_amnt<= 26500, 1, 0)
+loan_train$`funded_amnt_26500_33500` <- ifelse(loan_train$funded_amnt> 26500 & loan_train$funded_amnt<= 33500, 1, 0)
+loan_train$`funded_amnt:>33500` <- ifelse(loan_train$funded_amnt> 33500, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "funded_amnt" for data testing
+loan_test$`funded_amnt:<15000` <- ifelse(loan_test$funded_amnt< 15000, 1, 0)
+loan_test$`funded_amnt_15000_20000` <- ifelse(loan_test$funded_amnt> 15000 & loan_test$funded_amnt<= 20000, 1, 0)
+loan_test$`funded_amnt_20000_23000` <- ifelse(loan_test$funded_amnt> 20000 & loan_test$funded_amnt<= 23000, 1, 0)
+loan_test$`funded_amnt_23000_26500` <- ifelse(loan_test$funded_amnt> 23000 & loan_test$funded_amnt<= 26500, 1, 0)
+loan_test$`funded_amnt_26500_33500` <- ifelse(loan_test$funded_amnt> 26500 & loan_test$funded_amnt<= 33500, 1, 0)
+loan_test$`funded_amnt:>33500` <- ifelse(loan_test$funded_amnt> 33500, 1, 0)
+
+```
+
+<br>
+
+#### total_acc	
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Data segmentation 
+loan_train$total_acc_factor <- cut(loan_train$total_acc, breaks = 50)
+
+# Using function created to calculate WoE
+total_acc_train_stat <- calculate_continuous_woe(loan_train, response, total_acc_factor)
+
+# Display results
+total_acc_train_stat
+
+# Generate chart with filtered data
+total_acc_train_chart <- woe_chart(total_acc_train_stat, "total_acc_factor")
+
+# Display chart
+total_acc_train_chart
+
+```
+
+-   **Creating and classifying dummies for "total_acc"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "total_acc" for data training
+loan_train$`total_acc:<14.3` <- ifelse(loan_train$total_acc< 14.3, 1, 0)
+loan_train$`total_acc_14.3_35.4` <- ifelse(loan_train$total_acc> 14.3 & loan_train$total_acc<= 35.4, 1, 0)
+loan_train$`total_acc_35.4_44.2` <- ifelse(loan_train$total_acc> 35.4 & loan_train$total_acc<= 44.2, 1, 0)
+loan_train$`total_acc_44.2_54.8` <- ifelse(loan_train$total_acc> 44.2 & loan_train$total_acc<= 54.8, 1, 0)
+loan_train$`total_acc:>54.8` <- ifelse(loan_train$total_acc> 54.8, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "total_acc" for data testing
+loan_test$`total_acc:<14.3` <- ifelse(loan_test$total_acc< 14.3, 1, 0)
+loan_test$`total_acc_14.3_35.4` <- ifelse(loan_test$total_acc> 14.3 & loan_test$total_acc<= 35.4, 1, 0)
+loan_test$`total_acc_35.4_44.2` <- ifelse(loan_test$total_acc> 35.4 & loan_test$total_acc<= 44.2, 1, 0)
+loan_test$`total_acc_44.2_54.8` <- ifelse(loan_test$total_acc> 44.2 & loan_test$total_acc<= 54.8, 1, 0)
+loan_test$`total_acc:>54.8` <- ifelse(loan_test$total_acc> 54.8, 1, 0)
+
+```
+
+<br>
+
+#### open_acc 
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+open_acc_train_stat <- calculate_continuous_woe(loan_train, response, open_acc)
+
+# Display results
+open_acc_train_stat
+
+# Generate chart with filtered data
+open_acc_train_chart <- woe_chart(open_acc_train_stat, "open_acc")
+
+# Display chart
+open_acc_train_chart
+
+```
+
+-   **Creating and classifying dummies for "open_acc"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "open_acc" for data training
+loan_train$`open_acc:<=4` <- ifelse(loan_train$open_acc<= 4, 1, 0)
+loan_train$`open_acc_5_15` <- ifelse(loan_train$open_acc> 4 & loan_train$open_acc<= 15, 1, 0)
+loan_train$`open_acc_15_19` <- ifelse(loan_train$open_acc> 15 & loan_train$open_acc<= 19, 1, 0)
+loan_train$`open_acc_19_24` <- ifelse(loan_train$open_acc> 19 & loan_train$open_acc<= 24, 1, 0)
+loan_train$`open_acc:>24` <- ifelse(loan_train$open_acc> 24, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "open_acc" for data testing
+loan_test$`open_acc:<=4` <- ifelse(loan_test$open_acc<= 4, 1, 0)
+loan_test$`open_acc_5_15` <- ifelse(loan_test$open_acc> 4 & loan_test$open_acc<= 15, 1, 0)
+loan_test$`open_acc_15_19` <- ifelse(loan_test$open_acc> 15 & loan_test$open_acc<= 19, 1, 0)
+loan_test$`open_acc_19_24` <- ifelse(loan_test$open_acc> 19 & loan_test$open_acc<= 24, 1, 0)
+loan_test$`open_acc:>24` <- ifelse(loan_test$open_acc> 24, 1, 0)
+
+```
+
+<br>
+
+#### delinq_2yrs 
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Using function created to calculate WoE
+delinq_2yrs_train_stat <- calculate_continuous_woe(loan_train, response, delinq_2yrs)
+
+# Display results
+delinq_2yrs_train_stat
+
+# Generate chart with filtered data
+delinq_2yrs_train_chart <- woe_chart(delinq_2yrs_train_stat, "delinq_2yrs")
+
+# Display chart
+delinq_2yrs_train_chart
+
+```
+
+-   **Creating and classifying dummies for "delinq_2yrs"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "delinq_2yrs" for data training
+loan_train$`delinq_2yrs:0` <- ifelse(loan_train$delinq_2yrs == 0, 1, 0)
+loan_train$`delinq_2yrs:1` <- ifelse(loan_train$delinq_2yrs == 1, 1, 0)
+loan_train$`delinq_2yrs:2` <- ifelse(loan_train$delinq_2yrs == 2, 1, 0)
+loan_train$`delinq_2yrs:3` <- ifelse(loan_train$delinq_2yrs == 3, 1, 0)
+loan_train$`delinq_2yrs:>=4` <- ifelse(loan_train$delinq_2yrs >= 4, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "delinq_2yrs" for data testing
+loan_test$`delinq_2yrs:0` <- ifelse(loan_test$delinq_2yrs == 0, 1, 0)
+loan_test$`delinq_2yrs:1` <- ifelse(loan_test$delinq_2yrs == 1, 1, 0)
+loan_test$`delinq_2yrs:2` <- ifelse(loan_test$delinq_2yrs == 2, 1, 0)
+loan_test$`delinq_2yrs:3` <- ifelse(loan_test$delinq_2yrs == 3, 1, 0)
+loan_test$`delinq_2yrs:>=4` <- ifelse(loan_test$delinq_2yrs >= 4, 1, 0)
+
+```
+
+<br>
+
+#### mths_since_issue_d 
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Data segmentation 
+loan_train$mths_since_issue_d_factor <- cut(loan_train$mths_since_issue_d, breaks = 50)
+
+# Using function created to calculate WoE
+mths_since_issue_d_train_stat <- calculate_continuous_woe(loan_train, response, mths_since_issue_d_factor)
+
+# Display results
+mths_since_issue_d_train_stat
+
+# Generate chart with filtered data
+mths_since_issue_d_train_chart <- woe_chart(mths_since_issue_d_train_stat, "mths_since_issue_d_factor")
+
+# Display chart
+mths_since_issue_d_train_chart
+
+```
+
+-   **Creating and classifying dummies for "mths_since_issue_d"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "mths_since_issue_d" for data training
+loan_train$`mths_since_issue_d:35.9_37.1` <- ifelse(loan_train$mths_since_issue_d <= 37.1, 1, 0)
+loan_train$`mths_since_issue_d:37.1_40.3` <- ifelse(loan_train$mths_since_issue_d> 37.1 & loan_train$mths_since_issue_d<= 40.3, 1, 0)
+loan_train$`mths_since_issue_d:40.3_43.6` <- ifelse(loan_train$mths_since_issue_d> 40.3 & loan_train$mths_since_issue_d<= 43.6, 1, 0)
+loan_train$`mths_since_issue_d:43.6_49` <- ifelse(loan_train$mths_since_issue_d> 43.6 & loan_train$mths_since_issue_d<= 49, 1, 0)
+loan_train$`mths_since_issue_d:49_51.1` <- ifelse(loan_train$mths_since_issue_d> 49 & loan_train$mths_since_issue_d<= 51.1, 1, 0)
+loan_train$`mths_since_issue_d:51.1_57.6` <- ifelse(loan_train$mths_since_issue_d> 51.1 & loan_train$mths_since_issue_d<= 57.6, 1, 0)
+loan_train$`mths_since_issue_d:57.6_64.1` <- ifelse(loan_train$mths_since_issue_d> 57.6 & loan_train$mths_since_issue_d<= 64.1, 1, 0)
+loan_train$`mths_since_issue_d:>64.1` <- ifelse(loan_train$mths_since_issue_d > 64.1, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "mths_since_issue_d" for data testing
+loan_test$`mths_since_issue_d:35.9_37.1` <- ifelse(loan_test$mths_since_issue_d <= 37.1, 1, 0)
+loan_test$`mths_since_issue_d:37.1_40.3` <- ifelse(loan_test$mths_since_issue_d> 37.1 & loan_test$mths_since_issue_d<= 40.3, 1, 0)
+loan_test$`mths_since_issue_d:40.3_43.6` <- ifelse(loan_test$mths_since_issue_d> 40.3 & loan_test$mths_since_issue_d<= 43.6, 1, 0)
+loan_test$`mths_since_issue_d:43.6_49` <- ifelse(loan_test$mths_since_issue_d> 43.6 & loan_test$mths_since_issue_d<= 49, 1, 0)
+loan_test$`mths_since_issue_d:49_51.1` <- ifelse(loan_test$mths_since_issue_d> 49 & loan_test$mths_since_issue_d<= 51.1, 1, 0)
+loan_test$`mths_since_issue_d:51.1_57.6` <- ifelse(loan_test$mths_since_issue_d> 51.1 & loan_test$mths_since_issue_d<= 57.6, 1, 0)
+loan_test$`mths_since_issue_d:57.6_64.1` <- ifelse(loan_test$mths_since_issue_d> 57.6 & loan_test$mths_since_issue_d<= 64.1, 1, 0)
+loan_test$`mths_since_issue_d:>64.1` <- ifelse(loan_test$mths_since_issue_d > 64.1, 1, 0)
+
+```
+
+<br>
+
+#### mths_since_earliest_cr_line 
+
+-   **Data train**
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Data segmentation 
+loan_train$mths_since_earliest_cr_line_factor <- cut(loan_train$mths_since_earliest_cr_line, breaks = 50)
+
+# Using function created to calculate WoE
+mths_since_earliest_cr_line_train_stat <- calculate_continuous_woe(loan_train, response, mths_since_earliest_cr_line_factor)
+
+# Display results
+mths_since_earliest_cr_line_train_stat
+
+# Generate chart with filtered data
+mths_since_earliest_cr_line_train_chart <- woe_chart(mths_since_earliest_cr_line_train_stat, "mths_since_earliest_cr_line_factor")
+
+# Display chart
+mths_since_earliest_cr_line_train_chart
+
+```
+
+-   **Creating and classifying dummies for "mths_since_earliest_cr_line"**
+
+```{r}
+
+##############
+# loan_train #
+##############
+
+# Creating and classifying "mths_since_earliest_cr_line" for data training
+loan_train$`mths_since_earliest_cr_line:<=121` <- ifelse(loan_train$mths_since_earliest_cr_line <= 121, 1, 0)
+loan_train$`mths_since_earliest_cr_line:121_149` <- ifelse(loan_train$mths_since_earliest_cr_line> 121 & loan_train$mths_since_earliest_cr_line<= 149, 1, 0)
+loan_train$`mths_since_earliest_cr_line:149_369` <- ifelse(loan_train$mths_since_earliest_cr_line> 149 & loan_train$mths_since_earliest_cr_line<= 369, 1, 0)
+loan_train$`mths_since_earliest_cr_line:>369` <- ifelse(loan_train$mths_since_earliest_cr_line > 369, 1, 0)
+
+#############
+# loan_test #
+#############
+
+# Creating and classifying "mths_since_earliest_cr_line" for data testing
+loan_test$`mths_since_earliest_cr_line:<=121` <- ifelse(loan_test$mths_since_earliest_cr_line <= 121, 1, 0)
+loan_test$`mths_since_earliest_cr_line:121_149` <- ifelse(loan_test$mths_since_earliest_cr_line> 121 & loan_test$mths_since_earliest_cr_line<= 149, 1, 0)
+loan_test$`mths_since_earliest_cr_line:149_369` <- ifelse(loan_test$mths_since_earliest_cr_line> 149 & loan_test$mths_since_earliest_cr_line<= 369, 1, 0)
+loan_test$`mths_since_earliest_cr_line:>369` <- ifelse(loan_test$mths_since_earliest_cr_line > 369, 1, 0)
+
+```
+
+<br>
+
+### Creating final data training & data test
+
+-   **Task 1:** Grouping of dummies created 
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+##############
+# loan_train #
+##############
+
+# Subset of dummies selected for estimation
+inputs_with_benchmarks_train <- subset(loan_train, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE_NONE`,
+`home_ownership:RENT_OTHER`,
+`home_ownership:OWN`,
+`purpose:small_business`,
+`purpose:renewable_energy_educational`,
+`purpose:other_moving_house_consolidation_medical`,
+`purpose:vacation`,`purpose:home_improvement`,
+`purpose:credit_card`,
+`purpose:wedding_car_purchase`,
+`addr_state:NE_NV_AK`,
+`addr_state:SD_UT`,
+`addr_state:FL_NH`,
+`addr_state:WA_MO_CA_MD`,
+`addr_state:NJ_AZ_WI_GA_NM`,
+`addr_state:NC_OK_MS_OR_KY`,
+`addr_state:HI`,
+`addr_state:WV_SC_MI_NY_MT`,
+`addr_state:CT_IL_OH_DE_RI`,
+`addr_state:AL`,
+`addr_state:VA`,
+`addr_state:PA_LA`,
+`addr_state:VT_KS`,
+`addr_state:MA_MN`,
+`addr_state:TX_CO`,
+`addr_state:AR`,
+`addr_state:DC_TN_WY_IA_ID_IN_ME`,
+`term:36`,
+`term:60`,
+`int_rate:<8.49`,
+`int_rate:_8.49_11.2`,
+`int_rate:_11.2_16.2`,
+`annual_inc:<23700`,
+`annual_inc:23700_56200`,
+`annual_inc:56200_88600`,
+`annual_inc:88600_118000`,
+`annual_inc:118000_129000`,
+`annual_inc:129000_132000`,
+`annual_inc:132000_140000`,
+`annual_inc:>140000`,
+`dti:<2.5`,
+`dti_2.5_6`,
+`dti_6_12.5`,
+`dti_12.5_16`,
+`dti_16_19`,
+`dti_19_22`,
+`dti_22_25`,
+`dti:>25`,
+`pub_rec:<1`,
+`pub_rec:>=1`,
+`funded_amnt:<15000`,
+`funded_amnt_15000_20000`,
+`funded_amnt_20000_23000`,
+`funded_amnt_23000_26500`,
+`funded_amnt_26500_33500`,
+`funded_amnt:>33500`,
+`total_acc:<14.3`,
+`total_acc_14.3_35.4`,
+`total_acc_35.4_44.2`,
+`total_acc_44.2_54.8`,
+`total_acc:>54.8`,
+`open_acc:<=4`,
+`open_acc_5_15`,
+`open_acc_15_19`,
+`open_acc_19_24`,
+`open_acc:>24`,
+`delinq_2yrs:0`,
+`delinq_2yrs:1`,
+`delinq_2yrs:2`,
+`delinq_2yrs:3`,
+`delinq_2yrs:>=4`,
+`mths_since_issue_d:35.9_37.1`,
+`mths_since_issue_d:37.1_40.3`,
+`mths_since_issue_d:40.3_43.6`,
+`mths_since_issue_d:43.6_49`,
+`mths_since_issue_d:49_51.1`,
+`mths_since_issue_d:51.1_57.6`,
+`mths_since_issue_d:57.6_64.1`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`,
+`mths_since_earliest_cr_line:121_149`,
+`mths_since_earliest_cr_line:149_369`,
+`mths_since_earliest_cr_line:>369`,
+`response`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+inputs_with_benchmarks_test <- subset(loan_test, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE_NONE`,
+`home_ownership:RENT_OTHER`,
+`home_ownership:OWN`,
+`purpose:small_business`,
+`purpose:renewable_energy_educational`,
+`purpose:other_moving_house_consolidation_medical`,
+`purpose:vacation`,`purpose:home_improvement`,
+`purpose:credit_card`,
+`purpose:wedding_car_purchase`,
+`addr_state:NE_NV_AK`,
+`addr_state:SD_UT`,
+`addr_state:FL_NH`,
+`addr_state:WA_MO_CA_MD`,
+`addr_state:NJ_AZ_WI_GA_NM`,
+`addr_state:NC_OK_MS_OR_KY`,
+`addr_state:HI`,
+`addr_state:WV_SC_MI_NY_MT`,
+`addr_state:CT_IL_OH_DE_RI`,
+`addr_state:AL`,
+`addr_state:VA`,
+`addr_state:PA_LA`,
+`addr_state:VT_KS`,
+`addr_state:MA_MN`,
+`addr_state:TX_CO`,
+`addr_state:AR`,
+`addr_state:DC_TN_WY_IA_ID_IN_ME`,
+`term:36`,
+`term:60`,
+`int_rate:<8.49`,
+`int_rate:_8.49_11.2`,
+`int_rate:_11.2_16.2`,
+`annual_inc:<23700`,
+`annual_inc:23700_56200`,
+`annual_inc:56200_88600`,
+`annual_inc:88600_118000`,
+`annual_inc:118000_129000`,
+`annual_inc:129000_132000`,
+`annual_inc:132000_140000`,
+`annual_inc:>140000`,
+`dti:<2.5`,
+`dti_2.5_6`,
+`dti_6_12.5`,
+`dti_12.5_16`,
+`dti_16_19`,
+`dti_19_22`,
+`dti_22_25`,
+`dti:>25`,
+`pub_rec:<1`,
+`pub_rec:>=1`,
+`funded_amnt:<15000`,
+`funded_amnt_15000_20000`,
+`funded_amnt_20000_23000`,
+`funded_amnt_23000_26500`,
+`funded_amnt_26500_33500`,
+`funded_amnt:>33500`,
+`total_acc:<14.3`,
+`total_acc_14.3_35.4`,
+`total_acc_35.4_44.2`,
+`total_acc_44.2_54.8`,
+`total_acc:>54.8`,
+`open_acc:<=4`,
+`open_acc_5_15`,
+`open_acc_15_19`,
+`open_acc_19_24`,
+`open_acc:>24`,
+`delinq_2yrs:0`,
+`delinq_2yrs:1`,
+`delinq_2yrs:2`,
+`delinq_2yrs:3`,
+`delinq_2yrs:>=4`,
+`mths_since_issue_d:35.9_37.1`,
+`mths_since_issue_d:37.1_40.3`,
+`mths_since_issue_d:40.3_43.6`,
+`mths_since_issue_d:43.6_49`,
+`mths_since_issue_d:49_51.1`,
+`mths_since_issue_d:51.1_57.6`,
+`mths_since_issue_d:57.6_64.1`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`,
+`mths_since_earliest_cr_line:121_149`,
+`mths_since_earliest_cr_line:149_369`,
+`mths_since_earliest_cr_line:>369`,
+`response`
+))
+
+```
+
+-   **Task 2:** Creating benchmarks
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+##############
+# loan_train #
+##############
+
+# Subset of dummies selected for estimation
+benchmarks_train <- subset(loan_train, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT_OTHER`,
+`purpose:small_business`,
+`addr_state:NE_NV_AK`,
+`term:60`,
+`int_rate:>16.2`,
+`annual_inc:<23700`,
+`dti:>25`,
+`pub_rec:>=1`,
+`funded_amnt_23000_26500`,
+`total_acc:<14.3`,
+`open_acc:>24`,
+`delinq_2yrs:>=4`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+benchmarks_test <- subset(loan_test, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT_OTHER`,
+`purpose:small_business`,
+`addr_state:NE_NV_AK`,
+`term:60`,
+`int_rate:>16.2`,
+`annual_inc:<23700`,
+`dti:>25`,
+`pub_rec:>=1`,
+`funded_amnt_23000_26500`,
+`total_acc:<14.3`,
+`open_acc:>24`,
+`delinq_2yrs:>=4`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`
+))
+
+```
+
+-   **Task 3:** Removing benchmarks from inputs dataframe
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+##############
+# loan_train #
+##############
+
+# Excluding benchmarks from inputs train
+inputs_train <- inputs_with_benchmarks_train[,!names(inputs_with_benchmarks_train) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT_OTHER",
+"purpose:small_business",
+"addr_state:NE_NV_AK",
+"term:60",
+"int_rate:>16.2",
+"annual_inc:<23700",
+"dti:>25",
+"pub_rec:>=1",
+"funded_amnt_23000_26500",
+"total_acc:<14.3",
+"open_acc:>24",
+"delinq_2yrs:>=4",
+"mths_since_issue_d:>64.1",
+"mths_since_earliest_cr_line:<=121"
+)]
+
+#############
+# loan_test #
+#############
+
+# Excluding benchmarks from inputs test
+inputs_test <- inputs_with_benchmarks_test[,!names(inputs_with_benchmarks_test) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT_OTHER",
+"purpose:small_business",
+"addr_state:NE_NV_AK",
+"term:60",
+"int_rate:>16.2",
+"annual_inc:<23700",
+"dti:>25",
+"pub_rec:>=1",
+"funded_amnt_23000_26500",
+"total_acc:<14.3",
+"open_acc:>24",
+"delinq_2yrs:>=4",
+"mths_since_issue_d:>64.1",
+"mths_since_earliest_cr_line:<=121"
+)]
+
+```
+
+```{r}
+
+# For Expected Loss Calculation (see following section)
+
+##############
+# loan_train #
+##############
+
+# Copy for EL Calculation
+inputs_train_EL <- inputs_train
+
+#############
+# loan_test #
+#############
+
+# Copy for EL Calculation
+inputs_test_EL <- inputs_test
+
+```
+
+<br>
+
+## Building the Forecast Model
+
+Based on the dataset constructed in the last section, we use logistic regression to estimate the ability of each dummy variable to predict a bad loan (2.2.1). From these results, we can exclude unnecessary dummy variables (i.e., without predictive ability) (2.2.2) to re-estimate the model (2.2.3). 
+
+### Logistic Regression
+
+```{r warning = FALSE, message = FALSE}
+
+# Building a logistic regression model 
+model <- glm(response ~., data = inputs_train, family = binomial)
+
+# Display results
+summary(model)
+
+```
+
+### Subsetting
+
+<br> **Process:**
+
+1.   Selecting only dummies whose explanatory variables are statistically significant
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of dummies selected for estimation
+inputs_with_benchmarks_train <- subset(loan_train, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`purpose:small_business`,
+`purpose:renewable_energy_educational`,
+`purpose:other_moving_house_consolidation_medical`,
+`purpose:vacation`,`purpose:home_improvement`,
+`purpose:credit_card`,
+`purpose:wedding_car_purchase`,
+`addr_state:NE_NV_AK`,
+`addr_state:SD_UT`,
+`addr_state:FL_NH`,
+`addr_state:WA_MO_CA_MD`,
+`addr_state:NJ_AZ_WI_GA_NM`,
+`addr_state:NC_OK_MS_OR_KY`,
+`addr_state:HI`,
+`addr_state:WV_SC_MI_NY_MT`,
+`addr_state:CT_IL_OH_DE_RI`,
+`addr_state:AL`,
+`addr_state:VA`,
+`addr_state:PA_LA`,
+`addr_state:VT_KS`,
+`addr_state:MA_MN`,
+`addr_state:TX_CO`,
+`addr_state:AR`,
+`addr_state:DC_TN_WY_IA_ID_IN_ME`,
+`term:36`,
+`term:60`,
+`int_rate:<8.49`,
+`int_rate:_8.49_11.2`,
+`int_rate:_11.2_16.2`,
+`annual_inc:<23700`,
+`annual_inc:23700_56200`,
+`annual_inc:56200_88600`,
+`annual_inc:88600_118000`,
+`annual_inc:118000_129000`,
+`annual_inc:129000_132000`,
+`annual_inc:132000_140000`,
+`annual_inc:>140000`,
+`pub_rec:<1`,
+`pub_rec:>=1`,
+`mths_since_issue_d:35.9_37.1`,
+`mths_since_issue_d:37.1_40.3`,
+`mths_since_issue_d:40.3_43.6`,
+`mths_since_issue_d:43.6_49`,
+`mths_since_issue_d:49_51.1`,
+`mths_since_issue_d:51.1_57.6`,
+`mths_since_issue_d:57.6_64.1`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`,
+`mths_since_earliest_cr_line:121_149`,
+`mths_since_earliest_cr_line:149_369`,
+`mths_since_earliest_cr_line:>369`,
+`response`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+inputs_with_benchmarks_test <- subset(loan_test, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`purpose:small_business`,
+`purpose:renewable_energy_educational`,
+`purpose:other_moving_house_consolidation_medical`,
+`purpose:vacation`,`purpose:home_improvement`,
+`purpose:credit_card`,
+`purpose:wedding_car_purchase`,
+`addr_state:NE_NV_AK`,
+`addr_state:SD_UT`,
+`addr_state:FL_NH`,
+`addr_state:WA_MO_CA_MD`,
+`addr_state:NJ_AZ_WI_GA_NM`,
+`addr_state:NC_OK_MS_OR_KY`,
+`addr_state:HI`,
+`addr_state:WV_SC_MI_NY_MT`,
+`addr_state:CT_IL_OH_DE_RI`,
+`addr_state:AL`,
+`addr_state:VA`,
+`addr_state:PA_LA`,
+`addr_state:VT_KS`,
+`addr_state:MA_MN`,
+`addr_state:TX_CO`,
+`addr_state:AR`,
+`addr_state:DC_TN_WY_IA_ID_IN_ME`,
+`term:36`,
+`term:60`,
+`int_rate:<8.49`,
+`int_rate:_8.49_11.2`,
+`int_rate:_11.2_16.2`,
+`annual_inc:<23700`,
+`annual_inc:23700_56200`,
+`annual_inc:56200_88600`,
+`annual_inc:88600_118000`,
+`annual_inc:118000_129000`,
+`annual_inc:129000_132000`,
+`annual_inc:132000_140000`,
+`annual_inc:>140000`,
+`pub_rec:<1`,
+`pub_rec:>=1`,
+`mths_since_issue_d:35.9_37.1`,
+`mths_since_issue_d:37.1_40.3`,
+`mths_since_issue_d:40.3_43.6`,
+`mths_since_issue_d:43.6_49`,
+`mths_since_issue_d:49_51.1`,
+`mths_since_issue_d:51.1_57.6`,
+`mths_since_issue_d:57.6_64.1`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`,
+`mths_since_earliest_cr_line:121_149`,
+`mths_since_earliest_cr_line:149_369`,
+`mths_since_earliest_cr_line:>369`,
+`response`
+))
+
+```
+
+2.   Create a dateframe grouping benchmarks on these variables
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of dummies selected for estimation
+benchmarks_train <- subset(loan_train, select = c(
+`grade:G`,
+`purpose:small_business`,
+`addr_state:NE_NV_AK`,
+`term:60`,
+`int_rate:>16.2`,
+`annual_inc:<23700`,
+`pub_rec:>=1`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+benchmarks_test <- subset(loan_test, select = c(
+`grade:G`,
+`purpose:small_business`,
+`addr_state:NE_NV_AK`,
+`term:60`,
+`int_rate:>16.2`,
+`annual_inc:<23700`,
+`pub_rec:>=1`,
+`mths_since_issue_d:>64.1`,
+`mths_since_earliest_cr_line:<=121`
+))
+
+```
+
+3.   Create a dataframe excluding benchmarks
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Excluding benchmarks from inputs train
+inputs_train <- inputs_with_benchmarks_train[,!names(inputs_with_benchmarks_train) %in% c(
+"grade:G",
+"purpose:small_business",
+"addr_state:NE_NV_AK",
+"term:60",
+"int_rate:>16.2",
+"annual_inc:<23700",
+"pub_rec:>=1",
+"mths_since_issue_d:>64.1",
+"mths_since_earliest_cr_line:<=121"
+)]
+
+#############
+# loan_test #
+#############
+
+# Excluding benchmarks from inputs test
+inputs_test <- inputs_with_benchmarks_test[,!names(inputs_with_benchmarks_test) %in% c(
+"grade:G",
+"purpose:small_business",
+"addr_state:NE_NV_AK",
+"term:60",
+"int_rate:>16.2",
+"annual_inc:<23700",
+"pub_rec:>=1",
+"mths_since_issue_d:>64.1",
+"mths_since_earliest_cr_line:<=121"
+)]
+
+```
+
+### Final Version
+
+```{r warning = FALSE, message = FALSE}
+
+# Building a logistic regression model 
+model <- glm(response ~., data = inputs_train, family = binomial)
+
+# Display results
+summary(model)
+
+```
+
+<br>
+
+## Testing
+
+First, we use the prediction model constructed in the last section to predict bad loans, this time using test data (2.3.1). Next, we evaluate the predictive ability of the prediction model (2.3.2) using the confusion matrix, KPIs (accuracy, sensitivity, and specificity), ROC curve, Gini curve, and Kolmogorov-Smirnov curve.
+
+### Predict Default Probability
+
+```{r warning = FALSE, message = FALSE}
+
+# Making predictions on target variable using data test with the forecasting model  
+target_predict_test <- predict(model, newdata = inputs_test, type = "response")
+
+```
+
+<br>
+
+### Precision of the Model
+
+#### Confusion Matrix
+
+-   **Step 1:** Convert predicted target to binary variable (threshold = 0.8)
+
+```{r warning = FALSE, message = FALSE}
+
+# Defining a cut-off
+threshold = 0.8
+
+# Making predictions on target variable with binary output  
+target_predict_test_binary <- ifelse(predict(model, newdata = inputs_test, type = "response") > threshold, 1, 0)
+
+```
+
+-   **Step 2:** Concatenate actual and predicted target variable
+
+```{r warning = FALSE, message = FALSE}
+
+# Concatenate actual and predicted target variable
+target_actual_predict_test <- data.frame(loan_test$response,target_predict_test,target_predict_test_binary)
+
+# Display results
+target_actual_predict_test
+
+```
+
+-   **Step 3:** Confusion matrix (in value)
+
+```{r warning = FALSE, message = FALSE}
+
+# Building a confusion matrix 
+confusion_mat <- table(ifelse(target_actual_predict_test$loan_test.response == 0, "Bad", "Good"), ifelse(target_actual_predict_test$target_predict_test_binary == 0, "Bad", "Good"), dnn = c("Actual", "Predicted"))
+
+# Adding margins
+confusion_mat_sum <- addmargins(confusion_mat, margin = 1:2)
+
+# Display confusion matrix 
+confusion_mat_sum
+
+```
+
+-   **Step 3:** Confusion matrix (in %)
+
+```{r warning = FALSE, message = FALSE}
+# Putting the confusion matrix in %
+confusion_mat_pct <- round(prop.table(confusion_mat), 4)
+
+# Adding margins
+confusion_mat_pct_sum <- addmargins(confusion_mat_pct, margin = 1:2)
+
+# Display confusion matrix in %
+confusion_mat_pct_sum
+
+```
+
+**Note:** Interpretation of confusion matrix is made in the following section on model accuracy, sensitivity and specificity.
+
+<br>
+
+#### Accuracy, Sensitivity & Specificity 
+
+-   **True Negative (TN), False Negative (FN), False Positive (FP) & True Positive (TP)**
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating True Negative (TN), False Negative (FN), False Positive (FP) & True Positive (TP)
+TN = confusion_mat_pct_sum[1]
+FN = confusion_mat_pct_sum[2]
+FP = confusion_mat_pct_sum[4]
+TP = confusion_mat_pct_sum[5]
+
+```
+
+-   **Accuracy**
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating accuracy
+accuracy = ((TP + TN) / (FP + FN + TN + TP)) * 100
+
+round(accuracy, 2) # Accuracy = 1 means all loans have been properly categorized by the model.
+
+```
+
+-   **Sensitivity**
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating sensitivity
+sensitivity =  (TP / (TP + FN)) * 100
+
+# Round
+round(sensitivity, 2) 
+
+```
+
+-   **Specificity**
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating specificity 
+specificity =  (TN / (TN + FP)) * 100
+
+# Round
+round(specificity, 2) 
+
+```
+
+**Note:** We can observe a high accuracy rate, which means that the model correctly predicts whether the loan is good or bad. In addition, a high sensitivity rate is present too, suggesting that only a little part of actual "good loans" have been predicted as "bad loans" by the model. However, the specificity rate is relative low, indicating that a pretty large part of actual "bad loans" have been predicted as "good loans" by the model (i.e. increased losses). <br><br> Overall, while the accuracy rate confirms the global predictive performance of the forecasting model, higher sensitivity and specificity could be detrimental to the bank's business activity.
+
+<br>
+
+-   **Charts**
+
+```{r warning = FALSE, message = FALSE}
+
+# Define a vector to store the variable for each threshold
+accuracy_vec <- numeric(length = 100)
+sensitivity_vec <- numeric(length = 100)
+specificity_vec <- numeric(length = 100)
+
+# Loop through different threshold values and compute variable 
+for (i in 1:100) {
+  threshold <- i / 100
+  target_predict_test_binary <- ifelse(predict(model, newdata = inputs_test, type = "response") > threshold, 1, 0)
+  TP <- sum(target_predict_test_binary == 1 & loan_test$response == 1)
+  TN <- sum(target_predict_test_binary == 0 & loan_test$response == 0)
+  FP <- sum(target_predict_test_binary == 1 & loan_test$response == 0)
+  FN <- sum(target_predict_test_binary == 0 & loan_test$response == 1)
+  accuracy_vec[i] <- ((TP + TN) / (FP + FN + TN + TP)) 
+  sensitivity_vec[i] <- TP / (TP + FN)   
+  specificity_vec[i] <- TN / (FP + TN) 
+}
+
+```
+
+```{r warning = FALSE, message = FALSE}
+
+# Chart accuracy vs. threshold
+plot(x = seq(0, 1, length.out = 100), y = accuracy_vec, type = "l", xlab = "Threshold", ylab = "Accuracy", main = "Accuracy vs. Threshold")
+
+```
+
+**Note:** The chart shows the extent to which an increase in the threshold reduces the number of TPs and TNs caught per model.
+
+```{r warning = FALSE, message = FALSE}
+
+# Chart sensitivity vs. threshold
+plot(x = seq(0, 1, length.out = 100), y = sensitivity_vec, type = "l", xlab = "Threshold", ylab = "Sensitivity", main = "Sensitivity vs. Threshold")
+
+```
+
+**Note:** The chart shows the extent to which an increase in the threshold increases the probability to miss "good loans" per model.
+
+```{r warning = FALSE, message = FALSE}
+
+# Chart specificity vs. threshold
+plot(x = seq(0, 1, length.out = 100), y = specificity_vec, type = "l", xlab = "Threshold", ylab = "Specificity", main =  "Specificity vs. Threshold")
+
+```
+
+**Note:** The chart shows the extent to which an increase in the threshold reduces the probability of being exposed to "bad loans" by model.
+
+<br>
+
+#### ROC Curve
+
+```{r warning = FALSE, message = FALSE}
+
+# Load package
+pacman::p_load( 
+  pROC
+)
+
+# Build ROC curve
+roc_curve <- roc(target_actual_predict_test$loan_test.response, target_actual_predict_test$target_predict_test)
+
+# Display ROC curve
+plot(roc_curve)
+
+# Calculate AUROC
+AUROC <- auc(target_actual_predict_test$loan_test.response, target_actual_predict_test$target_predict_test)
+
+# Display AUROC
+AUROC
+
+```
+
+**Note:** Based on the usual standards of the area under the curve, the predictive performance of this prediction model is correct (68.44%), without being good (from 70%).
+
+<br>
+
+#### Gini Curve
+
+```{r warning = FALSE, message = FALSE}
+
+# Prevents the display of numbers in scientific format
+options(scipen = 999, digits = 7)
+
+# Applying a ascending order based on "target_predict_test"
+target_actual_predict_test <- target_actual_predict_test[order(target_actual_predict_test$target_predict_test), ]
+
+# Using fct "seq_along" to calculate cumulative pop
+target_actual_predict_test$`Cumulative N Population` <- seq_along(target_actual_predict_test$target_predict_test)
+
+# Calculate cumulative number of good loans
+target_actual_predict_test$`Cumulative N Good` <- cumsum(as.numeric(as.character(target_actual_predict_test$loan_test.response)))
+
+target_actual_predict_test$`Cumulative N Bad` <- target_actual_predict_test$`Cumulative N Population` - target_actual_predict_test$`Cumulative N Good`
+
+# Calculate cumulative pop in %
+target_actual_predict_test$`Cumulative Population %` <- target_actual_predict_test$`Cumulative N Population` / nrow(target_actual_predict_test)
+
+# Calculate cumulative good loans in %
+target_actual_predict_test$`Cumulative Good %` <- cumsum(as.numeric(as.character(target_actual_predict_test$loan_test.response))) / sum(as.numeric(as.character(target_actual_predict_test$loan_test.response)))
+
+# Calculate cumulative bad loans in %
+target_actual_predict_test$`Cumulative Bad %` <- target_actual_predict_test$`Cumulative N Bad` / (nrow(target_actual_predict_test) - sum(as.numeric(as.character(target_actual_predict_test$loan_test.response))))
+
+```
+
+```{r warning = FALSE, message = FALSE}
+
+# Plot Gini curve
+plot(x = target_actual_predict_test$`Cumulative Population %`,
+     y = target_actual_predict_test$`Cumulative Bad %`,
+     type = "l",
+     xlab = "Cumulative % Population",
+     ylab = "Cumulative % Bad",
+     main = "Gini Curve")
+
+# Add diagonal line
+lines(x = c(0, 1), y = c(0, 1), col = "grey")
+
+# Calculate Gini coefficient
+Gini = AUROC * 2 - 1
+
+# Display Gini
+Gini
+
+```
+
+**Note:** Based on the usual standards of Gini coefficient, the predictive performance of this prediction model is correct (36.89%), without being good (from 40%).
+
+<br>
+
+#### Kolmogorov-Smirnov Curve
+
+```{r warning = FALSE, message = FALSE}
+
+# Load package
+pacman::p_load( 
+  highcharter
+)
+
+# Build chart of Kolmogorov-Smirnov Curve
+highchart() %>%
+  hc_xAxis(title = list(text = "Estimated Probability for being Good")) %>%
+  hc_yAxis(title = list(text = "Cumulative %")) %>%
+  hc_add_series(target_actual_predict_test, type = "line", hcaes(x = target_predict_test, y = `Cumulative Bad %`), color = "#FF0000", name = "Cumulative Bad %") %>%
+  hc_add_series(target_actual_predict_test, type = "line", hcaes(x = target_predict_test, y = `Cumulative Good %`), color = "#0000FF", name = "Cumulative Good %") %>%
+  hc_title(text = "Kolmogorov-Smirnov Curves")
+
+# Calculate KS coef
+KS <- max(abs(target_actual_predict_test$`Cumulative Bad %` - target_actual_predict_test$`Cumulative Good %`))
+
+# Display KS coef
+KS
+
+```
+
+**Note:** Based on the usual standards of Kolmogorov-Smirnov coefficient, the predictive performance of this prediction model is correct (26.94%), without being good (from 30%).
+
+<br>
+
+## Generating Credit Scores
+
+-   **Step 1:** Extract the results of PD model into dataframe
+
+```{r warning = FALSE, message = FALSE}
+
+# Store results of logistic regression into dataframe 
+credit_scores <- data.frame(variables = names(coef(model)),
+                             coefficients = coef(model),
+                             p_values = round(summary(model)$coefficients[,4], 5))
+
+# Create dataframe constituted of benchmarks
+new_vals <- data.frame(variables = c("grade:G",
+                                     "purpose:small_business",
+                                     "addr_state:NE_NV_AK",
+                                     "term:60",
+                                     "int_rate:>16.2",
+                                     "annual_inc:<23700",
+                                     "pub_rec:>=1",
+                                     "mths_since_issue_d:>64.1",
+                                     "mths_since_earliest_cr_line:<=121"),
+                       coefficients = 0,
+                       p_values = NA_real_,
+                       stringsAsFactors = FALSE)
+
+# Combining results of logistic regression and benchmarks
+credit_scores <- rbind(credit_scores, new_vals)
+
+# Modifying rownames
+rownames(credit_scores) <- NULL
+
+# Create of the "category" column, which indicates the name of explanatory variable
+credit_scores$category <- sub(":.*", "", credit_scores$variables)
+
+# Rename explanatory variable
+credit_scores$category <- gsub("`([a-zA-Z])", "\\1", credit_scores$category)
+
+# Display results
+credit_scores
+
+```
+
+-   **Step 2:** Calculate credit score associated to each dummies
+
+```{r warning = FALSE, message = FALSE}
+
+# Specify the max & min scores
+min_score = 300
+max_score = 850
+
+# Store min coefficient of each category
+min_coef <- aggregate(coefficients ~ category, credit_scores, min)
+
+# Sum of all min coefficients of each category
+min_sum_coef <- sum(min_coef$coefficients)
+
+# Store max coefficient of each category
+max_coef <- aggregate(coefficients ~ category, credit_scores, max)
+
+# Sum of all max coefficients of each category
+max_sum_coef <- sum(max_coef$coefficients)
+
+# Calculate credit scores
+credit_scores$scores <- credit_scores$coefficients * (max_score - min_score) / (max_sum_coef - min_sum_coef)
+
+# Display credit scores
+credit_scores
+
+```
+
+-   **Step 3:** Calculate each individual's credit score
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculate credit scores
+credit_scores$scores[1] <- ((credit_scores$coefficients[1] - min_sum_coef) / (max_sum_coef - min_sum_coef)) * (max_score - min_score) + min_score
+
+# Round
+credit_scores$scores <- round(credit_scores$scores,0)
+
+# Store credit scores
+credit_scores_var <- credit_scores$scores
+
+# Add a column to represent the Intercept
+inputs_with_benchmarks_test <- cbind(`(Intercept)` = rep(1, nrow(inputs_with_benchmarks_test)), inputs_with_benchmarks_test)
+
+# Convert to numeric format
+credit_scores_var <- as.numeric(credit_scores_var)
+
+# Convert to matrix class
+inputs_with_benchmarks_test <- data.matrix(inputs_with_benchmarks_test)
+
+# Calculate each borrower's individual score by multiplying their dummies by credit score associated to these dummies
+indiv_scores <- inputs_with_benchmarks_test %*% credit_scores_var %>%
+as.data.frame() %>%
+setNames("credit_score")
+
+# Load package
+pacman::p_load( 
+  DT
+)
+
+# Create the borrower's individual credit score
+datatable(indiv_scores, caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center; color:black;  font-size:150% ;','Individual Credit Scores')) %>%
+  formatStyle(
+    names(indiv_scores),
+    backgroundColor = styleInterval(
+      cuts = c(500, 550, 600, 650, 700, 750), 
+      values = c('#FF7777', '#FF9999', '#FFBBBB', '#FFD2D2', '#FFE8E8', '#FFF4F4', '#FFFFFF')
+    )
+  ) %>%
+  formatStyle(
+    names(indiv_scores),
+    backgroundColor = styleEqual(0, "white")
+  ) 
+
+```
+
+<br>
+
+## The Minimum Acceptable Credit Score 
+
+-   **Step 1:** Calculate the probability of non-default for each individual
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculate the probability of non-default
+sum_coef_from_score = ((indiv_scores - min_score) / (max_score - min_score)) * (max_sum_coef - min_sum_coef) + min_sum_coef
+
+# Calculate the probability of non-default
+indiv_proba_from_score <- exp(sum_coef_from_score) / (exp(sum_coef_from_score) + 1)
+
+```
+
+-   **Step 2:** Understanding the relationship between threshold and PD
+
+```{r warning = FALSE, message = FALSE}
+
+# Build ROC Curve
+roc_curve <- roc(target_actual_predict_test$loan_test.response, target_actual_predict_test$target_predict_test)
+
+# Store FPR, TPR, threshold from ROC output
+fpr <- round(roc_curve$specificities, 5)
+tpr <- round(roc_curve$sensitivities, 5)
+threshold <- roc_curve$thresholds
+
+# Concatenate FPR, TPR, threshold in same df
+cut_off <- as.data.frame(cbind(threshold,fpr,tpr))
+
+# Replace the value of last row of "cut_off$threshold" by 1
+cut_off$threshold[nrow(cut_off)] <- as.numeric(1)
+
+# Replace -Inf of "cut_off$threshold" by min value 
+cut_off$threshold[1] <- min(cut_off$threshold[cut_off$threshold != -Inf], na.rm = TRUE)
+
+# Order cut_off by desc order of threshold
+cut_off <- cut_off %>% arrange(desc(threshold))
+
+# Calculate the score related to a specific threshold value
+cut_off$score <- round(((log(cut_off$threshold / (1 - cut_off$threshold)) - min_sum_coef) * ((max_score - min_score) / (max_sum_coef - min_sum_coef)) + min_score), 0)
+
+# Replace the value of first row of "cut_off$score" by max_score
+cut_off$score[1] <- max_score
+
+```
+
+-   **Step 3:** Automation of calculation of the approval rate, rejection rate for a given PD   
+
+```{r warning = FALSE, message = FALSE}
+
+# Create a function to automate the calculation of n_approved
+n_approved <- function(p) {
+  sum(target_actual_predict_test$target_predict_test >= p)
+}
+
+# Add column of n_approved
+cut_off$n_app <- sapply(cut_off$threshold, n_approved)
+
+# Add column of n_refused
+cut_off$n_ref <- length(target_actual_predict_test$target_predict_test) - cut_off$n_app
+
+# Add approval rate column
+cut_off$`%_app` <- round((cut_off$n_app / length(target_actual_predict_test$target_predict_test)) * 100, 5)
+
+# Add reject rate column
+cut_off$`%_ref` <- round((100 - cut_off$`%_app`), 5)
+
+# Display results
+cut_off
+
+```
+
+-   **Step 4:** Automation of calculation of minimum acceptable credit score for a given PD  
+
+```{r warning = FALSE, message = FALSE}
+
+# Create a function to calculate the minimum acceptable credit score for a PD given
+min_credit_score <- function(df, threshold_PD) {
+  target_threshold <- 1 - threshold_PD
+  closest_row <- which.min(abs(df$threshold - target_threshold))
+  return(df[closest_row, c("score", "%_app", "%_ref")])
+}
+
+```
+
+```{r warning = FALSE, message = FALSE}
+
+# Display results for a PD equal to 10%
+min_credit_score(cut_off, 0.1)
+
+```
+
+-   **Step 5:** Automation of calculation of minimum acceptable credit score for a given PD range
+
+```{r warning = FALSE, message = FALSE}
+
+# Create a function to calculate the minimum acceptable credit score for a range of PD
+min_credit_scores_range <- function(df) {
+  threshold_PD <- seq(0.01, 0.1, 0.01)
+  results <- data.frame(threshold_PD = paste0(threshold_PD*100, "%"), score = rep(NA, length(threshold_PD)), `%_app` = rep(NA, length(threshold_PD)), `%_ref` = rep(NA, length(threshold_PD)))
+  
+  for (i in 1:length(threshold_PD)) {
+    target_threshold <- 1 - threshold_PD[i]
+    closest_row <- which.min(abs(df$threshold - target_threshold))
+    results[i, "min_score"] <- df[closest_row, "score"]
+    results[i, "%_app"] <- df[closest_row, "%_app"]
+    results[i, "%_ref"] <- df[closest_row, "%_ref"]
+  }
+  
+  return(results[, colSums(is.na(results)) == 0])
+}
+
+
+```
+
+```{r warning = FALSE, message = FALSE}
+
+# Display results for PD up to 10
+min_credit_scores_range(cut_off)
+
+```
+
+<br>
+
+# LGD Model
+
+To obtain the predicted value from the LDG model, several steps are required. First, from the dataset, we select only bad loans since the model consists in calculating the loss rate in case of default, and then we construct the dependent variable, the recovery rate (3.1). Two types of regression are used: a logistic regression to predict bad loans with no recovery (3.2), and a linear regression to predict bad loans with partial recovery (3.3). Finally, the two models are combined to obtain the recovery predictions (3.4).
+
+## Preliminary work
+
+### Selecting Data
+
+```{r warning = FALSE, message = FALSE}
+
+# Use of a copy of the data made before PD model 
+# Select only bad loans
+bad_loan <- loan_copy[loan_copy$response == 0, ]
+
+```
+
+### Building and Exploring the Dependant Variable
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating of Recovery rate 
+bad_loan$recovery_rate <- bad_loan$recoveries / bad_loan$funded_amnt
+
+# Basic statistics of recovery rate for all loans
+summary(bad_loan$recovery_rate)
+
+```
+
+**Note:** Since the maximum is greater than 1, we must cap the recovery rate.
+
+```{r warning = FALSE, message = FALSE}
+
+# Capping maximum of recovery rate 
+bad_loan$recovery_rate <- ifelse(bad_loan$recovery_rate > 1, 1, bad_loan$recovery_rate)
+
+```
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Histo of recovery rate
+bad_loan %>%
+  filter(response == 0) %>%
+  mutate(recovery_rate_cat = cut(recovery_rate, breaks = seq(0, 0.75, by = 0.01), right = FALSE)) %>%
+  group_by(recovery_rate_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(recovery_rate_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Recovery Rate for Bad Loans",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "Recovery Rate")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+``` 
+
+**Note:** We observe a concentration of the distribution between 0% and 1% of the recovery rate.
+
+## Stage 1: Logistic Regression
+
+### Preliminary work
+
+-   **Task 1:** Convert the dependent variable to a binary variable
+
+```{r class.source = 'fold-hide'}
+
+# Convert dependent variable to binary variable, = 1 if different from 0, 0 either
+bad_loan$recovery_rate_binary <- ifelse(bad_loan$recovery_rate == 0, 0, 1)
+
+```
+
+-   **Task 2:** Splitting data
+
+```{r class.source = 'fold-hide'}
+
+# Specify seed
+set.seed(123)
+
+# Splitting data 
+index <- sample.split(bad_loan$recovery_rate_binary, SplitRatio = 0.8)
+
+# Store train data
+bad_loan_log_train <- bad_loan[index == TRUE, ]
+
+# Store targets train data
+bad_loan_log_test <- bad_loan[index == FALSE, ]
+
+```
+
+-   **Task 3:** Selection of Inputs
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of variables for estimation
+inputs_with_benchmarks_train <- subset(bad_loan_log_train, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE`,
+`home_ownership:RENT`,
+`home_ownership:OTHER`,
+`home_ownership:OWN`,
+`purpose:car`,                      
+`purpose:credit_card`,               
+`purpose:debt_consolidation`,       
+`purpose:educational`,            
+`purpose:home_improvement`,         
+`purpose:house` ,               
+`purpose:major_purchase`,          
+`purpose:medical`,                  
+`purpose:moving`,                    
+`purpose:other`,                    
+`purpose:renewable_energy`,         
+`purpose:small_business`,           
+`purpose:vacation`,                 
+`purpose:wedding`,
+`term`,
+`int_rate`,
+`emp_length`,
+`annual_inc`,
+`dti`,
+`pub_rec`,
+`funded_amnt`,
+`total_acc`,
+`open_acc`,
+`delinq_2yrs`,
+`mths_since_issue_d`,
+`mths_since_earliest_cr_line`,
+`recovery_rate_binary`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+inputs_with_benchmarks_test <- subset(bad_loan_log_test, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE`,
+`home_ownership:RENT`,
+`home_ownership:OTHER`,
+`home_ownership:OWN`,
+`purpose:car`,                      
+`purpose:credit_card`,               
+`purpose:debt_consolidation`,       
+`purpose:educational`,            
+`purpose:home_improvement`,         
+`purpose:house` ,               
+`purpose:major_purchase`,          
+`purpose:medical`,                  
+`purpose:moving`,                    
+`purpose:other`,                    
+`purpose:renewable_energy`,         
+`purpose:small_business`,           
+`purpose:vacation`,                 
+`purpose:wedding`,
+`term`,
+`int_rate`,
+`emp_length`,
+`annual_inc`,
+`dti`,
+`pub_rec`,
+`funded_amnt`,
+`total_acc`,
+`open_acc`,
+`delinq_2yrs`,
+`mths_since_issue_d`,
+`mths_since_earliest_cr_line`,
+`recovery_rate_binary`
+))
+
+```
+
+-   **Task 3:** Creating benchmarks
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of dummies selected for estimation
+benchmarks_train <- subset(bad_loan_log_train, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT`,
+`purpose:small_business`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+benchmarks_test <- subset(bad_loan_log_test, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT`,
+`purpose:small_business`
+))
+
+```
+
+-   **Task 4:** Removing benchmarks from inputs
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Excluding benchmarks from inputs train
+inputs_train_lgd_lvl1 <- inputs_with_benchmarks_train[,!names(inputs_with_benchmarks_train) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT",
+"purpose:small_business"
+)]
+
+#############
+# loan_test #
+#############
+
+# Excluding benchmarks from inputs test
+inputs_test_lgd_lvl1 <- inputs_with_benchmarks_test[,!names(inputs_with_benchmarks_test) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT",
+"purpose:small_business"
+)]
+
+```
+
+### Building the Forecast Model
+
+```{r warning = FALSE, message = FALSE}
+
+# Building a logistic regression model 
+lgd_model <- glm(recovery_rate_binary ~., data = inputs_train_lgd_lvl1, family = binomial)
+
+# Displaying results
+summary(lgd_model)
+
+```
+
+### Testing
+
+```{r warning = FALSE, message = FALSE}
+
+# Making predictions on target variable using data test with the forecasting model  
+target_predict_test_lgd_lvl1 <- predict(lgd_model, newdata = inputs_test_lgd_lvl1, type = "response")
+
+```
+
+### Precision of the Model
+
+#### Confusion Matrix
+
+```{r warning = FALSE, message = FALSE}
+
+# Defining a cut-off
+threshold = 0.5
+
+# Applying a cut-off set at 0.5
+target_predict_test_binary <- ifelse(predict(lgd_model, newdata = inputs_test_lgd_lvl1, type = "response") > threshold, 1, 0)
+
+```
+
+```{r warning = FALSE, message = FALSE}
+
+# Concatenate actual and predicted target variable
+target_actual_predict_test <- data.frame(bad_loan_log_test$recovery_rate_binary,target_predict_test_lgd_lvl1,target_predict_test_binary)
+
+# Display results
+target_actual_predict_test
+
+```
+
+
+```{r warning = FALSE, message = FALSE}
+
+# Building a confusion matrix 
+confusion_mat <- table(ifelse(target_actual_predict_test$bad_loan_log_test.recovery_rate_binary == 0, "No_rec", "Partial_recov"), ifelse(target_actual_predict_test$target_predict_test_binary == 0, "No_rec", "Partial_recov"), dnn = c("Actual", "Predicted"))
+
+# Adding margins
+confusion_mat_sum <- addmargins(confusion_mat, margin = 1:2)
+
+# Display confusion matrix 
+confusion_mat_sum
+
+# Putting the confusion matrix in %
+confusion_mat_pct <- round(prop.table(confusion_mat), 2)
+
+# Adding margins
+confusion_mat_pct_sum <- addmargins(confusion_mat_pct, margin = 1:2)
+
+# Display confusion matrix in %
+confusion_mat_pct_sum
+
+```
+
+<br>
+
+#### Accuracy, Sensitivity & Specificity 
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating True Negative (TN), False Negative (FN), False Positive (FP) & True Positive (TP)
+TN = confusion_mat_pct_sum[1]
+FN = confusion_mat_pct_sum[2]
+FP = confusion_mat_pct_sum[4]
+TP = confusion_mat_pct_sum[5]
+
+```
+
+-   **Accuracy**
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating accuracy
+accuracy = ((TP + TN) / (FP + FN + TN + TP)) * 100
+
+# Round
+round(accuracy, 2) 
+
+```
+
+-   **Sensitivity**
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating sensitivity
+sensitivity =  (TP / (TP + FN)) * 100
+
+# Round
+round(sensitivity, 2) 
+
+```
+
+-   **Specificity**
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating specificity 
+specificity =  (TN / (TN + FP)) * 100
+
+# Round
+round(specificity, 2) 
+
+```
+
+**Notes:** We can observe a high accuracy rate, which means that the model properly predicts whether the bad loan is with recovery or not. In addition, the sensitivity rate is very high, indicating that only a residual part of the "bad loans" with recovery was incorrectly predicted by the model. The prediction error of this model results mainly from the "bad loans" without recovery, illustrated by a very low sensitivity rate (4.98%).
+
+<br>
+
+#### ROC Curve
+
+```{r warning = FALSE, message = FALSE}
+
+# Build ROC curve
+roc_curve <- roc(target_actual_predict_test$bad_loan_log_test.recovery_rate_binary, target_actual_predict_test$target_predict_test_lgd_lvl1)
+
+# Display ROC curve
+plot(roc_curve)
+
+# Calculate AUROC
+AUROC <- auc(target_actual_predict_test$bad_loan_log_test.recovery_rate_binary, target_actual_predict_test$target_predict_test_lgd_lvl1)
+
+# Display AUROC
+AUROC
+
+```
+
+**Note:** Based on the usual standards of the area under the curve, the predictive performance of this prediction model is correct (62.07%), without being good (from 70%).
+
+<br>
+
+## Stage 2: Linear Regression
+
+### Preliminary work
+
+-   **Task 1:** Selecting Data
+
+```{r class.source = 'fold-hide'}
+
+# Create a dataframe that selects only those bad loans that have been partially recovered.
+bad_loan_part_rec <- bad_loan[bad_loan$recovery_rate_binary == 1, ]
+
+```
+
+-   **Task 2:** Splitting data
+
+```{r class.source = 'fold-hide'}
+
+# Specify seed
+set.seed(123)
+
+# Splitting data 
+index <- sample.split(bad_loan_part_rec$recovery_rate, SplitRatio = 0.8)
+
+# Store train data
+bad_loan_part_rec_train <- bad_loan_part_rec[index == TRUE, ]
+
+# Store targets train data
+bad_loan_part_rec_test <- bad_loan_part_rec[index == FALSE, ]
+
+```
+
+-   **Task 3:** Selection of Inputs
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of variables for estimation
+inputs_with_benchmarks_train <- subset(bad_loan_part_rec_train, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE`,
+`home_ownership:RENT`,
+`home_ownership:OTHER`,
+`home_ownership:OWN`,
+`purpose:car`,                      
+`purpose:credit_card`,               
+`purpose:debt_consolidation`,       
+`purpose:educational`,            
+`purpose:home_improvement`,         
+`purpose:house` ,               
+`purpose:major_purchase`,          
+`purpose:medical`,                  
+`purpose:moving`,                    
+`purpose:other`,                    
+`purpose:renewable_energy`,         
+`purpose:small_business`,           
+`purpose:vacation`,                 
+`purpose:wedding`,
+`term`,
+`int_rate`,
+`emp_length`,
+`annual_inc`,
+`dti`,
+`pub_rec`,
+`funded_amnt`,
+`total_acc`,
+`open_acc`,
+`delinq_2yrs`,
+`mths_since_issue_d`,
+`mths_since_earliest_cr_line`,
+`recovery_rate`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+inputs_with_benchmarks_test <- subset(bad_loan_part_rec_test, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE`,
+`home_ownership:RENT`,
+`home_ownership:OTHER`,
+`home_ownership:OWN`,
+`purpose:car`,                      
+`purpose:credit_card`,               
+`purpose:debt_consolidation`,       
+`purpose:educational`,            
+`purpose:home_improvement`,         
+`purpose:house` ,               
+`purpose:major_purchase`,          
+`purpose:medical`,                  
+`purpose:moving`,                    
+`purpose:other`,                    
+`purpose:renewable_energy`,         
+`purpose:small_business`,           
+`purpose:vacation`,                 
+`purpose:wedding`,
+`term`,
+`int_rate`,
+`emp_length`,
+`annual_inc`,
+`dti`,
+`pub_rec`,
+`funded_amnt`,
+`total_acc`,
+`open_acc`,
+`delinq_2yrs`,
+`mths_since_issue_d`,
+`mths_since_earliest_cr_line`,
+`recovery_rate`
+))
+
+```
+
+-   **Task 4:** Creating benchmarks
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of dummies selected for estimation
+benchmarks_train <- subset(bad_loan_part_rec_train, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT`,
+`purpose:small_business`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+benchmarks_test <- subset(bad_loan_part_rec_test, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT`,
+`purpose:small_business`
+))
+
+```
+
+-   **Task 5:** Removing benchmarks from inputs
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Excluding benchmarks from inputs train
+inputs_train_lgd_lvl2 <- inputs_with_benchmarks_train[,!names(inputs_with_benchmarks_train) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT",
+"purpose:small_business"
+)]
+
+#############
+# loan_test #
+#############
+
+# Excluding benchmarks from inputs test
+inputs_test_lgd_lvl2 <- inputs_with_benchmarks_test[,!names(inputs_with_benchmarks_test) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT",
+"purpose:small_business"
+)]
+
+```
+
+### Building the Forecast Model
+
+```{r warning = FALSE, message = FALSE}
+
+# Building a linear regression model 
+lgd_model_lm <- lm(recovery_rate ~., data = inputs_train_lgd_lvl2)
+
+# Displaying results
+summary(lgd_model_lm)
+
+# Remarque sur l'interprétation de l'output : 
+    # Educational : + 1 point de % => /_\+ taux de recouvrement : 4,11%
+    # pub_rec : + 1 $ => /_\+ taux de recouvrement : 0,4042%
+
+```
+
+### Testing
+
+```{r warning = FALSE, message = FALSE}
+
+# Making predictions on target variable using data test with the forecasting model  
+target_predict_test <- predict(lgd_model_lm, newdata = inputs_test_lgd_lvl2, type = "response")
+
+# Display results
+summary(target_predict_test)
+
+# Display actual targets
+summary(inputs_test_lgd_lvl2$recovery_rate)
+
+```
+
+### Precision of the Model 
+
+-   **Check 1:** Correlation matrix
+
+```{r warning = FALSE, message = FALSE}
+
+# Correlation matrix
+cor(cbind(inputs_test_lgd_lvl2$recovery_rate, target_predict_test))
+
+```
+
+<br>
+
+-   **Check 2:** Histogram of residus
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculate residus
+residus <- inputs_test_lgd_lvl2$recovery_rate - target_predict_test
+
+summary(residus)
+
+# Calculate density of residus
+densite <- density(residus)
+
+residus <- as.data.frame(residus,densite)
+
+residus %>%
+  mutate(residus_cat = cut(residus, breaks = seq(-0.25, 1, by = 0.01), right = FALSE)) %>%
+  group_by(residus_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(residus_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Histogram of residus",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "residus")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+```
+
+**Note:** The distribution looks well like a Gaussian distribution, centered on 0.
+
+<br>
+
+## Stage 3: Combining models
+
+```{r warning = FALSE, message = FALSE}
+
+# Testing model lvl2 with input lvl1
+target_predict_test_lgd_lvl1_lv2 <- predict(lgd_model_lm, newdata = inputs_test_lgd_lvl1)
+
+# Combining models
+target_predict_test_lgd = target_predict_test_lgd_lvl1 * target_predict_test_lgd_lvl1_lv2
+
+# Display results
+summary(target_predict_test_lgd)
+
+```
+
+<br>
+
+# EAD Model
+
+In order to estimate the exposition at default, we must build a new indicator that we will use as dependent variable in the model (4.1). Given the nature of this variable, we build the forecast from a linear regression (4.2), then tested with the data test (4.3). Finally, we check the precision and validity of the model with a correlation matrix and histogram of residus (4.4).
+
+## Preliminary work
+
+### Selecting Data
+
+```{r warning = FALSE, message = FALSE}
+
+# Use of a copy of the data made before PD model
+# Select only bad loans
+bad_loan <- loan_copy[loan_copy$response == 0, ]
+
+```
+
+### Building and Exploring the Dependant Variable
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculating of CCF
+bad_loan$CCF <- (bad_loan$funded_amnt - bad_loan$total_rec_prncp) / bad_loan$funded_amnt
+
+```
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+summary(bad_loan$CCF)
+
+``` 
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+bad_loan %>%
+  filter(response == 0) %>%
+  mutate(CCF_cat = cut(CCF, breaks = seq(0, 1, by = 0.025), right = FALSE)) %>%
+  group_by(CCF_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(CCF_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Credit Conversion Factor for Bad Loans",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "CCF")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+``` 
+
+**Reminder:** Interpretation of "CCF": 
+
+-   CCF = 0: The loan has been repaid in full
+-   CCF = 1 : The loan has been neither totally nor partially repaid
+
+**Note:** Most bad borrowers have repaid less than one-third of their loan amount.
+
+<br>
+
+#### Splitting Data
+
+```{r}
+
+# Specify seed
+set.seed(123)
+
+# Splitting data 
+index <- sample.split(bad_loan$CCF, SplitRatio = 0.8)
+
+# Store train data
+bad_loan_log_train <- bad_loan[index == TRUE, ]
+
+# Store targets train data
+bad_loan_log_test <- bad_loan[index == FALSE, ]
+
+```
+
+<br>
+
+#### Selection of Inputs
+
+-   **Task 1:** Subset of variables for estimation
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of variables for estimation
+inputs_with_benchmarks_train <- subset(bad_loan_log_train, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE`,
+`home_ownership:RENT`,
+`home_ownership:OTHER`,
+`home_ownership:OWN`,
+`purpose:car`,                      
+`purpose:credit_card`,               
+`purpose:debt_consolidation`,       
+`purpose:educational`,            
+`purpose:home_improvement`,         
+`purpose:house` ,               
+`purpose:major_purchase`,          
+`purpose:medical`,                  
+`purpose:moving`,                    
+`purpose:other`,                    
+`purpose:renewable_energy`,         
+`purpose:small_business`,           
+`purpose:vacation`,                 
+`purpose:wedding`,
+`term`,
+`int_rate`,
+`emp_length`,
+`annual_inc`,
+`dti`,
+`pub_rec`,
+`funded_amnt`,
+`total_acc`,
+`open_acc`,
+`delinq_2yrs`,
+`mths_since_issue_d`,
+`mths_since_earliest_cr_line`,
+`CCF`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+inputs_with_benchmarks_test <- subset(bad_loan_log_test, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE`,
+`home_ownership:RENT`,
+`home_ownership:OTHER`,
+`home_ownership:OWN`,
+`purpose:car`,                      
+`purpose:credit_card`,               
+`purpose:debt_consolidation`,       
+`purpose:educational`,            
+`purpose:home_improvement`,         
+`purpose:house` ,               
+`purpose:major_purchase`,          
+`purpose:medical`,                  
+`purpose:moving`,                    
+`purpose:other`,                    
+`purpose:renewable_energy`,         
+`purpose:small_business`,           
+`purpose:vacation`,                 
+`purpose:wedding`,
+`term`,
+`int_rate`,
+`emp_length`,
+`annual_inc`,
+`dti`,
+`pub_rec`,
+`funded_amnt`,
+`total_acc`,
+`open_acc`,
+`delinq_2yrs`,
+`mths_since_issue_d`,
+`mths_since_earliest_cr_line`,
+`CCF`
+))
+
+```
+
+-   **Task 2:** Creating benchmarks
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Subset of dummies selected for estimation
+benchmarks_train <- subset(bad_loan_log_train, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT`,
+`purpose:small_business`
+))
+
+#############
+# loan_test #
+#############
+
+# Subset of dummies selected for estimation
+benchmarks_test <- subset(bad_loan_log_test, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT`,
+`purpose:small_business`
+))
+
+```
+
+-   **Task 3:** Removing benchmarks from inputs
+
+```{r class.source = 'fold-hide'}
+
+##############
+# loan_train #
+##############
+
+# Excluding benchmarks from inputs train
+inputs_train_ead <- inputs_with_benchmarks_train[,!names(inputs_with_benchmarks_train) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT",
+"purpose:small_business"
+)]
+
+#############
+# loan_test #
+#############
+
+# Excluding benchmarks from inputs test
+inputs_test_ead <- inputs_with_benchmarks_test[,!names(inputs_with_benchmarks_test) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT",
+"purpose:small_business"
+)]
+
+```
+
+## Building the Forecast Model
+
+```{r warning = FALSE, message = FALSE}
+
+# Building a linear regression model 
+ead_model_lm <- lm(CCF ~., data = inputs_train_ead)
+
+# Displaying results
+summary(ead_model_lm)
+
+# Remarque sur l'interprétation de l'output : 
+    # Educational : + 1 point de % => /_\+ taux de recouvrement : 4,11%
+    # pub_rec : + 1 $ => /_\+ taux de recouvrement : 0,4042%
+
+```
+
+## Testing
+
+```{r warning = FALSE, message = FALSE}
+
+# Making predictions on target variable on data test from lgd_model estimated with data train 
+target_predict_test <- predict(ead_model_lm, newdata = inputs_test_ead, type = "response")
+
+# Display predicted targets
+summary(target_predict_test)
+
+# Display actual targets
+summary(inputs_test_ead$CCF)
+
+```
+
+## Precision of the Model
+
+-   **Check 1:** Correlation matrix
+
+```{r warning = FALSE, message = FALSE}
+
+cor(cbind(inputs_test_ead$CCF, target_predict_test))
+
+```
+
+<br>
+
+-   **Check 2:** Histogram of residus
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculate residus
+residus <- inputs_test_ead$CCF - target_predict_test
+
+summary(residus)
+
+# Calculate density of residus
+densite <- density(residus)
+
+# Histogram of residus
+hist(residus, breaks = 25, freq = FALSE, main = "Histogram of residus")
+lines(densite, col = "red")
+
+```
+
+# Expected Loss Calculation
+
+## Preliminary work
+
+-   **Task 1:** Calling Data
+
+```{r warning = FALSE, message = FALSE}
+
+# Use of a copy of the data made before PD model
+loan <- loan_copy
+
+```
+
+-   **Task 2:** Subset of variables for estimation
+
+```{r class.source = 'fold-hide'}
+
+# Subset of variables for estimation
+inputs_with_benchmarks_train <- subset(loan, select = c(
+`grade:A`,
+`grade:B`,
+`grade:C`,
+`grade:D`,
+`grade:E`,
+`grade:F`,
+`grade:G`,
+`verification_status:Verified`,
+`verification_status:Source Verified`,
+`verification_status:Not Verified`,
+`home_ownership:MORTGAGE`,
+`home_ownership:RENT`,
+`home_ownership:OTHER`,
+`home_ownership:OWN`,
+`purpose:car`,                      
+`purpose:credit_card`,               
+`purpose:debt_consolidation`,       
+`purpose:educational`,            
+`purpose:home_improvement`,         
+`purpose:house` ,               
+`purpose:major_purchase`,          
+`purpose:medical`,                  
+`purpose:moving`,                    
+`purpose:other`,                    
+`purpose:renewable_energy`,         
+`purpose:small_business`,           
+`purpose:vacation`,                 
+`purpose:wedding`,
+`term`,
+`int_rate`,
+`emp_length`,
+`annual_inc`,
+`dti`,
+`pub_rec`,
+`funded_amnt`,
+`total_acc`,
+`open_acc`,
+`delinq_2yrs`,
+`mths_since_issue_d`,
+`mths_since_earliest_cr_line`
+))
+
+```
+
+-   **Task 3:** Creating benchmarks
+
+```{r class.source = 'fold-hide'}
+
+# Subset of dummies selected for estimation
+benchmarks_train <- subset(loan, select = c(
+`grade:G`,
+`verification_status:Verified`,
+`home_ownership:RENT`,
+`purpose:small_business`
+))
+
+```
+
+-   **Task 4:** Removing benchmarks from inputs
+
+```{r class.source = 'fold-hide'}
+
+# Excluding benchmarks from inputs 
+inputs <- inputs_with_benchmarks_train[,!names(inputs_with_benchmarks_train) %in% c(
+"grade:G",
+"verification_status:Verified",
+"home_ownership:RENT",
+"purpose:small_business"
+)]
+
+```
+
+## Calculating EL 
+
+We have all the components to calculate the total expected losses from the downloaded data set. Thus, using the dataset with the created dummies (5.1), we make predictions on LGD, EAD, and PD to finally calculate, from the product of these components, the total expected losses on the funded amount (5.2). 
+
+### Funded Amount
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Basic statistics
+summary(loan$funded_amnt)
+
+# Create histo
+loan %>%
+  mutate(funded_amnt_cat = cut(funded_amnt, breaks = seq(0, 35000, by = 500), right = FALSE)) %>%
+  group_by(funded_amnt_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(funded_amnt_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Histogram of Funded amount",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "funded_amnt")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+``` 
+
+### Compoment 1: LGD 
+
+-   **Step 1:**  Forecasts for the recovery rate
+
+```{r warning = FALSE, message = FALSE}
+
+# Estimating predictions on recovery rate using all data with the forecasting model LDG lvl1 
+loan$recovery_rate_st_1 <- predict(lgd_model, newdata = loan, type = "response")
+
+# Estimating predictions on recovery rate using all data with the forecasting model LDG lvl2
+loan$recovery_rate_st_2 <- predict(lgd_model_lm, newdata = loan, type = "response")
+
+# Calculation of predicted recovery rate
+loan$recovery_rate <- loan$recovery_rate_st_1 * loan$recovery_rate_st_2
+
+# Display results
+summary(loan$recovery_rate)
+
+```
+
+<br>
+
+-   **Step 2:** Calculate the LGD 
+
+```{r warning = FALSE, message = FALSE}
+
+# Flooring minimum of recovery rate 
+loan$recovery_rate <- ifelse(loan$recovery_rate < 0, 0, loan$recovery_rate)
+
+# Calculate LGD from recovery rate
+loan$LGD <- 1 - loan$recovery_rate
+
+# Basic statistics
+summary(loan$LGD)
+
+```
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Create histo
+loan %>%
+  mutate(LGD_cat = cut(LGD, breaks = seq(0, 1, by = 0.0025), right = FALSE)) %>%
+  group_by(LGD_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(LGD_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Histogram of Loss Given Default",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "LGD")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+``` 
+
+<br> **Note:** After recoveries, the average losses and median losses represent, respectively, 94.85% and 94.91% of amount funded. 
+
+<br>
+
+### Compoment 2: EAD 
+
+-   **Step 1:**  Forecasts for the CCF
+
+```{r warning = FALSE, message = FALSE}
+
+# Estimating predictions on CCF using all data with the forecasting model EAD
+loan$CCF <- predict(ead_model_lm, newdata = loan, type = "response")
+
+# Display results
+summary(loan$CCF)
+
+```
+
+<br> **Note:** Bad borrowers stop repaying with an average of 60.97% of the loan still outstanding.
+
+<br>
+
+-   **Step 2:** Calculate the EAD 
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Flooring minimum of recovery rate 
+loan$CCF <- ifelse(loan$CCF < 0, 0, loan$CCF)
+
+# Calculate EAD from CCF & funded amount
+loan$EAD <- loan$CCF * loan$funded_amnt
+
+# Basic statistics
+summary(loan$EAD)
+
+```
+
+<br> **Note:** The average exposure at default is 6839\$ and the median exposure at default is 5570\$.
+
+<br>
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Create histo
+loan %>%
+  mutate(EAD_cat = cut(EAD, breaks = seq(0, 31000, by = 500), right = FALSE)) %>%
+  group_by(EAD_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(EAD_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Histogram of Exposure at Default",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "EAD")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+``` 
+
+### Compoment 3: PD 
+
+```{r warning = FALSE, message = FALSE}
+
+# Concatenate inputs train & inputs test 
+inputs <- rbind(inputs_train_EL, inputs_test_EL)
+
+# Calculate PD from probability of non-default
+loan$PD <- 1 - (predict(model, newdata = inputs, type = "response"))
+
+# Basic statistics
+summary(loan$PD)
+
+```
+
+<br> **Note:** The average probability of default is 14.19% and the median probability of default is 12.16%.
+
+<br>
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Create histo
+loan %>%
+  mutate(PD_cat = cut(PD, breaks = seq(0, 1, by = 0.01), right = FALSE)) %>%
+  group_by(PD_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(PD_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Histogram of Probability of Default",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "PD")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+```
+
+### EL
+
+```{r warning = FALSE, message = FALSE}
+
+# EL Calculation
+loan$EL <- loan$LGD * loan$EAD * loan$PD
+
+# Basic statistics
+summary(loan$EL)
+
+```
+
+<br> **Note:** The average expected loss is 924.3\$ and the median expected loss is 601.8\$. As can be seen in the histogram below, there is a high concentration of small losses, which is related to the distribution of the amount funded.
+
+```{r class.source = 'fold-hide', message=FALSE}
+
+# Create histo
+loan %>%
+  mutate(EL_cat = cut(EL, breaks = seq(0, 7500, by = 100), right = FALSE)) %>%
+  group_by(EL_cat) %>%
+  summarize(count = n()) %>%
+  hchart("column", hcaes(x = as.character(EL_cat), y = count),
+         color = "#0000FF") %>%
+  hc_title(text = "Histogram of Expected Loss",
+           margin = 20,
+           align = "center") %>% 
+  hc_xAxis(title = list(text = "EL")) %>%
+  hc_yAxis(title = list(text = "Frequency"))
+
+``` 
+
+```{r warning = FALSE, message = FALSE}
+
+# Calculate total expected losses
+sum_loan_EL <- data.frame(funded_amnt = sum(loan$funded_amnt), EL = sum(loan$EL), EL_rate = ( sum(loan$EL) / sum(loan$funded_amnt) ) * 100)
+
+# Display results
+sum_loan_EL
+
+```
+
+<br> **Note:** Total expected losses are 36.7 million for a total committed amount of 434.8 million, representing an expected loss rate of 8.44%.
+
+<br>
+
+### Table of KPI for each borrower
+
+```{r class.source = 'fold-hide', warning = FALSE, message = FALSE}
+
+# Create a dataframe of KPI 
+KPI <- round(subset(loan, select = c(funded_amnt,PD,LGD,EAD,EL)), 4)
+
+# Create a table of KPI by borrower
+datatable(KPI, caption = htmltools::tags$caption(style = 'caption-side: top; text-align: center; color:black;  font-size:150% ;','PD, LGD, EAD, EL for each borrower')) %>% 
+  formatStyle(
+    "PD",
+    backgroundColor = styleInterval(
+      cuts = c(0.1, 0.15, 0.25), 
+      values = c('#FFFFFF', '#FFD2D2', '#FF9999', '#FF7777')
+    )
+  ) %>%
+  formatStyle(
+    "LGD",
+    backgroundColor = styleInterval(
+      cuts = c(0.9, 0.925, 0.95), 
+      values = c('#FFFFFF', '#FFD2D2', '#FF9999', '#FF7777')
+    )
+  ) %>%
+  formatStyle(
+    "EAD",
+    backgroundColor = styleInterval(
+      cuts = c(5570, 7000, 10000), 
+      values = c('#FFFFFF', '#FFD2D2', '#FF9999', '#FF7777')
+    )
+  ) %>%
+  formatStyle(
+    "EL",
+    backgroundColor = styleInterval(
+      cuts = c(500, 750, 2000), 
+      values = c('#FFFFFF', '#FFD2D2', '#FF9999', '#FF7777')
+    )
+  ) %>%
+  formatStyle(
+    names(KPI),
+    backgroundColor = styleEqual(0, "white")
+  )
+
+```
+
+<br> **Note:** The conditional formatting for EAD and EL must be put into perspective to the extent that the dangerous range depends to the amount funded.
